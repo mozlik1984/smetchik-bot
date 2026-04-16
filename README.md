@@ -1,0 +1,2 @@
+pytesseract
+smetchik-bot
