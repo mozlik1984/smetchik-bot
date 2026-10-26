@@ -28,10 +28,10 @@ def get_price_list_content():
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = (
-        "👋 **Бот-сметчик переведен в боевой визуальный режим!**\n\n"
-        "📥 **Как получить точную смету:**\n"
-        "Отправьте мне ссылку на Google Диск с дизайн-проектом (PDF).\n"
-        "Я сам изучу все чертежи, комментарии, закладные и инсталляции, после чего сформирую готовый Excel-файл!"
+        "👋 **Бот-сметчик запущен в зрячем боевом режиме!**\n\n"
+        "📥 **Как составить смету:**\n"
+        "Отправьте мне ссылку на Google Диск с вашим дизайн-проектом (PDF).\n"
+        "Убедитесь, что доступ открыт для всех по ссылке («Все, у кого есть ссылка» в режиме читателя)."
     )
     bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
@@ -40,42 +40,64 @@ def handle_project_link(message):
     user_text = message.text.strip()
     
     if config.GOOGLE_DRIVE_MARKER not in user_text:
-        bot.reply_to(message, "❌ Пожалуйста, отправьте корректную ссылку на Google Диск с проектом.")
+        bot.reply_to(message, "❌ Пожалуйста, отправьте корректную ссылку на Google Диск.")
         return
         
     status_message = bot.reply_to(
         message, 
-        "⏳ **Ссылка принята!**\nПередаю проект в зрячую модель Gemini Pro для визуального анализа чертежей и выносок. Это займет около 1-2 минут, пожалуйста, подождите..."
+        "⏳ **Ссылка принята!**\nСкачиваю чертежи проекта на сервер и передаю в зрячую модель gpt-4o-mini для визуального анализа выносок и размеров. Пожалуйста, подождите..."
     )
     
     price_list = get_price_list_content()
     ai_response = ai_service.analyze_project_url_by_downloading(user_text, price_list)
     
     if isinstance(ai_response, dict) and "error" in ai_response:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка ИИ:\n`{ai_response['error']}`", parse_mode="Markdown")
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text=f"❌ Ошибка ИИ:\n`{ai_response['error']}`", 
+            parse_mode="Markdown"
+        )
         return
 
     if not ai_response:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="⚠️ ИИ вернул пустой результат.")
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text="⚠️ ИИ вернул пустой результат."
+        )
         return
 
     try:
         txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"смета_{message.chat.id}")
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="✅ **Смета успешно сформирована!**")
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text="✅ **Смета успешно сформирована!**\nОтправляю файлы..."
+        )
         
         with open(txt_file, "rb") as txt, open(xlsx_file, "rb") as xlsx:
             bot.send_document(message.chat.id, txt, caption="📄 Смета в текстовом формате")
-            bot.send_document(message.chat.id, xlsx, caption="📊 Итоговый файл Excel")
+            bot.send_document(message.chat.id, xlsx, caption="📊 Итоговая таблица Excel")
             
         if os.path.exists(txt_file): os.remove(txt_file)
         if os.path.exists(xlsx_file): os.remove(xlsx_file)
     except Exception as e:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка сборки файлов: {str(e)}")
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text=f"❌ Ошибка сборки файлов: {str(e)}"
+        )
 
 if __name__ == "__main__":
+    # Запускаем фоновый веб-сервер Flask
     server_thread = threading.Thread(target=run_web_server)
     server_thread.daemon = True
     server_thread.start()
+    
+    # ПРИНУДИТЕЛЬНАЯ ЗАЧИСТКА: Сбрасываем любые старые вебхуки, чтобы убрать ошибку 409
     bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+    
+    # Запускаем бесконечный опрос с автоматическим пропуском застрявших старых сообщений
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
     
