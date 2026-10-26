@@ -1,5 +1,6 @@
-python-telegram-bot
-pytesseract
-Pillow
-flask
+aiogram
+python-dotenv
+aiohttp
+openpyxl
 pymupdf
+
