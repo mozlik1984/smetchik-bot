@@ -27,7 +27,6 @@ def analyze_project_text_with_deepseek(user_text, price_list_text):
     )
     
     data = {
-        # Используем актуальный слаг экономичной модели DeepSeek в ProxyAPI
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [
             {"role": "system", "content": "Ты сметный калькулятор. Отвечаешь строго валидным JSON-массивом."},
