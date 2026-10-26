@@ -20,15 +20,19 @@ dp = Dispatcher()
 
 def convert_to_direct_download_url(url: str) -> str:
     url = url.strip()
+    
     if GOOGLE_DRIVE_MARKER in url:
         marker = "/file/d/"
         start_idx = url.find(marker)
         if start_idx != -1:
             id_start = start_idx + len(marker)
             tail = url[id_start:]
+            
+            # Находим конец ID перед следующим слэшем или вопросительным знаком
             end_idx = tail.find("/")
             if end_idx == -1:
                 end_idx = tail.find("?")
+                
             file_id = tail[:end_idx] if end_idx != -1 else tail
             if file_id:
                 return f"{GOOGLE_DOWNLOAD_BASE}{file_id}"
@@ -43,8 +47,8 @@ async def run_full_pipeline(file_path: str, safe_filename: str, message: types.M
             await status_message.edit_text("Error: PDF file is empty or corrupted.")
             return
 
-        await status_message.edit_text(f"Pages: {len(image_paths)}. Diagnosing AI...")
-        img_path = image_paths[0]
+        await status_message.edit_text(f"Pages: {len(image_paths)}. Connecting AI Vision...")
+        img_path = image_paths[0]  # Берем строго первый элемент списка страниц
         
         await status_message.edit_text("Testing AI Vision on Page 1...")
         page_data = await analyze_project_page(img_path)
