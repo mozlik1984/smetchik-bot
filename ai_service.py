@@ -21,14 +21,9 @@ def extract_google_file_id(url):
     return None
 
 def analyze_project_file_with_ai(file_path, price_list_text):
-    """Заглушка для сохранения структуры"""
-    return {"error": "Пожалуйста, используйте отправку ссылок на Google Диск."}
+    return {"error": "Пожалуйста, отправьте ссылку на Google Диск."}
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
-    """
-    Отправляет прямую ссылку на PDF в бесплатную зрячую модель OpenRouter.
-    Сервер вообще ничего не скачивает и не режет, память не тратится!
-    """
     file_id = extract_google_file_id(project_url)
     if not file_id:
         return {"error": "Не удалось распознать ID файла."}
@@ -39,9 +34,11 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
         f"id{config.URL_EQUAL}{file_id}"
     )
 
+    # Исправленные заголовки авторизации для OpenRouter
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": f"{config.URL_SCHEME}{config.URL_COLON}{config.URL_DOUBLE_SLASH}localhost"
     }
     
     prompt = (
@@ -55,7 +52,6 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     )
     
     data = {
-        # Используем бесплатную зрячую топ-модель от Google через OpenRouter
         "model": "google/gemini-2.5-flash",
         "messages": [
             {
