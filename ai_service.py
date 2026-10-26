@@ -2,33 +2,17 @@ import requests
 import json
 import config
 
-def convert_google_drive_link(url):
+def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Превращает обычную ссылку Google Диска в ссылку для прямого скачивания файла,
-    чтобы нейросеть скачивала сам PDF, а не веб-интерфейс Google.
+    Отправляет физический файл проекта и текст прайса в нейросеть.
     """
-    if "://google.com" in url:
-        # Извлекаем ID файла из ссылки
-        parts = url.split('/')
-        for i, part in enumerate(parts):
-            if part == 'd' and i + 1 < len(parts):
-                file_id = parts[i+1].split('?')[0]
-                # Формируем прямую ссылку для скачивания документа
-                return f"https://://google.com/uc?export=download&id={file_id}"
-    return url
-
-def analyze_project_with_ai(project_url, price_list_text):
     headers = {
-        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {config.OPENAI_API_KEY}"
     }
     
-    # Конвертируем ссылку в прямую для скачивания
-    direct_download_url = convert_google_drive_link(project_url)
-    
     prompt = (
-        f"Ты — опытный инженер-сметчик в сфере отделки и ремонта.\n"
-        f"Внимательно изучи PDF-файл дизайн-проекта по этой прямой ссылке: {direct_download_url}\n\n"
+        "Ты — опытный инженер-сметчик в сфере отделки и ремонта.\n"
+        "Внимательно изучи прикрепленный PDF-файл дизайн-проекта.\n\n"
         f"Используй ТОЛЬКО этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
         "Твоя задача:\n"
         "1. Найди в проекте ведомости отделки, планы полов, стен и потолков.\n"
@@ -40,17 +24,30 @@ def analyze_project_with_ai(project_url, price_list_text):
         "В ответе должен быть ТОЛЬКО чистый JSON, без текста до или после, без разметки ```json."
     )
     
+    # Формируем multipart/form-data запрос для передачи файла вместе с промптом
+    # Для ProxyAPI/OpenAI мы передаем параметры модели в секцию data, а файл в files
     data = {
         "model": "gpt-4o",
-        "messages": [
+        "messages": json.dumps([
             {"role": "system", "content": "Ты сметный калькулятор. Отвечаешь строго валидным JSON-массивом без Markdown."},
             {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.1
+        ]),
+        "temperature": "0.1"
     }
     
     try:
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=120)
+        with open(file_path, "rb") as f:
+            files = {
+                "file": (os.path.basename(file_path), f, "application/pdf")
+            }
+            
+            response = requests.post(
+                config.AI_COMPLETIONS_URL, 
+                headers=headers, 
+                data=data, 
+                files=files,
+                timeout=150
+            )
         
         if response.status_code == 200:
             raw_content = response.json()["choices"]["message"]["content"].strip()
@@ -60,6 +57,7 @@ def analyze_project_with_ai(project_url, price_list_text):
             return json.loads(raw_content)
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
+            
     except Exception as e:
         return {"error": str(e)}
         
