@@ -28,42 +28,49 @@ def get_price_list_content():
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = (
-        "🏗️ **Бот запущен в тестовом режиме DeepSeek!**\n\n"
-        "📥 Отправьте мне параметры объекта обычным текстом, и я соберу для вас Excel.\n"
-        "**Пример текста:**\n"
-        "`Площадь пола 50 кв.м, площадь стен 120 кв.м, дверей скрытых 4 шт`"
+        "👋 **Бот-сметчик переведен в боевой визуальный режим!**\n\n"
+        "📥 **Как получить точную смету:**\n"
+        "Отправьте мне ссылку на Google Диск с дизайн-проектом (PDF).\n"
+        "Я сам изучу все чертежи, комментарии, закладные и инсталляции, после чего сформирую готовый Excel-файл!"
     )
     bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: True)
-def handle_text_data(message):
+def handle_project_link(message):
     user_text = message.text.strip()
     
-    if config.TEXT_DATA_MARKER not in user_text.lower():
-        bot.reply_to(message, "❌ Пожалуйста, укажите параметры объекта (например: Площадь пола...)")
+    if config.GOOGLE_DRIVE_MARKER not in user_text:
+        bot.reply_to(message, "❌ Пожалуйста, отправьте корректную ссылку на Google Диск с проектом.")
         return
         
-    status_message = bot.reply_to(message, "⏳ Передаю параметры в DeepSeek. Формирую Excel...")
+    status_message = bot.reply_to(
+        message, 
+        "⏳ **Ссылка принята!**\nПередаю проект в зрячую модель Gemini Pro для визуального анализа чертежей и выносок. Это займет около 1-2 минут, пожалуйста, подождите..."
+    )
     
     price_list = get_price_list_content()
-    ai_response = ai_service.analyze_project_text_with_deepseek(user_text, price_list)
+    ai_response = ai_service.analyze_project_url_by_downloading(user_text, price_list)
     
     if isinstance(ai_response, dict) and "error" in ai_response:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка: {ai_response['error']}")
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка ИИ:\n`{ai_response['error']}`", parse_mode="Markdown")
+        return
+
+    if not ai_response:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="⚠️ ИИ вернул пустой результат.")
         return
 
     try:
-        txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"тест_смета_{message.chat.id}")
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="✅ Таблица Excel успешно собрана!")
+        txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"смета_{message.chat.id}")
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="✅ **Смета успешно сформирована!**")
         
         with open(txt_file, "rb") as txt, open(xlsx_file, "rb") as xlsx:
-            bot.send_document(message.chat.id, txt, caption="📄 Текстовая смета")
-            bot.send_document(message.chat.id, xlsx, caption="📊 Готовый Excel файл")
+            bot.send_document(message.chat.id, txt, caption="📄 Смета в текстовом формате")
+            bot.send_document(message.chat.id, xlsx, caption="📊 Итоговый файл Excel")
             
         if os.path.exists(txt_file): os.remove(txt_file)
         if os.path.exists(xlsx_file): os.remove(xlsx_file)
     except Exception as e:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка генерации файлов: {str(e)}")
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка сборки файлов: {str(e)}")
 
 if __name__ == "__main__":
     server_thread = threading.Thread(target=run_web_server)
