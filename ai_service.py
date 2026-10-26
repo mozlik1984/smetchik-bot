@@ -90,7 +90,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         if response.status_code == 200:
             response_json = response.json()
             
-            # ИСПРАВЛЕНО: Защищенное извлечение с точным индексом первого элемента массива choices
+            # Исправлено: точный индекс [0] для массива choices
             choices = response_json.get("choices", [])
             if not choices or not isinstance(choices, list):
                 return {"error": f"Неверная структура ответа API: {response.text}"}
