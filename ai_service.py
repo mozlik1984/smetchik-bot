@@ -25,7 +25,7 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Конвертирует листы чертежей PDF в RGB-картинки и отправляет их в gpt-4o-mini.
+    Конвертирует листы чертежей PDF in RGB-картинки и отправляет их в gpt-4o-mini.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -90,7 +90,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         if response.status_code == 200:
             response_json = response.json()
             
-            # Строгий и безопасный разбор списка choices по числовому индексу
+            # ЧЁТКИЙ ИСПРАВЛЕННЫЙ ИНДЕКС: Получаем первый элемент списка choices
             choices_list = response_json.get("choices")
             if choices_list and isinstance(choices_list, list) and len(choices_list) > 0:
                 first_choice = choices_list[0]
