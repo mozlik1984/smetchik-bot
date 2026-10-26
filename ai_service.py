@@ -4,9 +4,6 @@ import os
 import config
 
 def extract_google_file_id(url):
-    """
-    Безопасно извлекает ID файла без текстовых литералов в коде.
-    """
     if config.GOOGLE_DRIVE_MARKER not in url:
         return None
     try:
@@ -24,17 +21,16 @@ def extract_google_file_id(url):
     return None
 
 def analyze_project_file_with_ai(file_path, price_list_text):
-    """Заглушка для сохранения структуры проекта"""
     return {"error": "Пожалуйста, используйте отправку ссылок на Google Диск."}
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
     """
-    Передает прямую ссылку на PDF-чертежи во флагманскую зрячую модель Gemini 1.5 Pro.
-    ИИ анализирует графику, выноски, комментарии и считает точную смету.
+    Передает прямую ссылку скачивания чертежей в зрячую модель gpt-4o-mini через ProxyAPI.
+    Модель сама визуально сканирует документ, находит выноски, инсталляции и закладные.
     """
     file_id = extract_google_file_id(project_url)
     if not file_id:
-        return {"error": "Не удалось распознать ID файла в ссылке Google Диска."}
+        return {"error": "Не удалось распознать ID файла в ссылке."}
         
     download_url = (
         f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
@@ -42,29 +38,26 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
         f"id{config.URL_EQUAL}{file_id}"
     )
 
-    # Заголовки для авторизации в OpenRouter
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": f"{config.URL_SCHEME}{config.URL_COLON}{config.URL_DOUBLE_SLASH}localhost"
+        "Content-Type": "application/json"
     }
     
     prompt = (
-        "Ты — высококлассный инженер-сметчик в сфере отделки и ремонта квартир.\n"
-        "Перед тобой полноценный дизайн-проект в прикрепленном PDF-файле.\n"
-        "Твоя задача — провести детальный визуальный анализ всех листов проекта. Изучи чертежи, графические схемы, ведомости отделки, планы полов, стен и потолков.\n"
-        "Внимательно рассмотри все визуальные комментарии дизайнера, стрелочки и сноски на планах (наличие фанерных закладных, усиление инсталляций, скрытые ниши для штор, двери invisible).\n"
-        "Если на плане указан натяжной потолок, а из ГКЛ делаются только ниши для гардин — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь.\n\n"
-        f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
+        "Ты — профессиональный инженер-сметчик в отделке и ремонте.\n"
+        "Перед тобой полноценный дизайн-проект в прикрепленном файле.\n"
+        "Внимательно изучи все чертежи, графические схемы, планы полов/стен/потолка и спецификации.\n"
+        "Рассмотри все визуальные комментарии дизайнера, стрелочки и выноски (наличие фанерных закладных, усиление профилей под инсталляции, скрытые ниши для штор, двери invisible).\n"
+        "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь.\n\n"
+        f"Используй исключительно этот прайс-лист на работы:\n{price_list_text}\n\n"
         "Выполни расчет:\n"
         "1. Рассчитай точные площади (кв.м), длины (п.м) и количество (шт) по каждой подходящей позиции из прайса.\n"
         "2. Сформируй смету строго в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
-        "Формат ответа: [{\"name\": \"название работы\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
+        "Формат ответа: [{\"name\": \"название\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
     )
     
     data = {
-        # Подключаем флагманскую зрячую модель с огромным контекстом
-        "model": "google/gemini-1.5-pro",
+        "model": "openai/gpt-4o-mini", # Подключаем экономичную зрячую модель
         "messages": [
             {
                 "role": "user",
@@ -73,20 +66,22 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": download_url
+                            "url": download_url # Передаем прямую ссылку на графику PDF
                         }
                     }
                 ]
             }
         ],
-        "temperature": 0.15
+        "temperature": 0.1
     }
     
     try:
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=180)
+        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=150)
         
         if response.status_code == 200:
-            raw_content = response.json()["choices"][0]["message"]["content"].strip()
+            response_json = response.json()
+            raw_content = response_json["choices"][0]["message"]["content"].strip()
+            
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
             return json.loads(raw_content)
