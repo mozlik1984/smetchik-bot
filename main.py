@@ -1,87 +1,96 @@
+import asyncio
+import logging
 import os
-import re
-import pytesseract
-import fitz  # PyMuPDF
-from PIL import Image, ImageOps, ImageEnhance
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from flask import Flask
-from threading import Thread
+import aiohttp
+import traceback
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandStart
 
-# --- ОБМАНКА ДЛЯ RENDER ---
-app = Flask('')
-@app.route('/')
-def home(): return "Бот-сметчик в сети!"
+from config import (
+    BOT_TOKEN, 
+    DOWNLOADS_DIR, 
+    GOOGLE_DOWNLOAD_BASE, 
+    GOOGLE_DRIVE_MARKER
+)
+from converter import convert_pdf_to_images
+from ai_service import analyze_project_page
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+logging.basicConfig(level=logging.INFO)
+dp = Dispatcher()
 
-# --- ЛОГИКА БОТА ---
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+def convert_to_direct_download_url(url: str) -> str:
+    url = url.strip()
+    if GOOGLE_DRIVE_MARKER in url:
+        marker = "/file/d/"
+        start_idx = url.find(marker)
+        if start_idx != -1:
+            id_start = start_idx + len(marker)
+            tail = url[id_start:]
+            end_idx = tail.find("/")
+            if end_idx == -1:
+                end_idx = tail.find("?")
+            file_id = tail[:end_idx] if end_idx != -1 else tail
+            if file_id:
+                return f"{GOOGLE_DOWNLOAD_BASE}{file_id}"
+    return url
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Определяем тип файла
-    is_pdf = False
-    if update.message.document and update.message.document.mime_type == 'application/pdf':
-        file = await update.message.document.get_file()
-        is_pdf = True
-    elif update.message.photo:
-        file = await update.message.photo[-1].get_file()
-    else:
-        file = await update.message.document.get_file()
-
-    file_path = "temp_file"
-    await file.download_to_drive(file_path)
-    await update.message.reply_text("📂 Файл принят. Начинаю глубокое сканирование...")
-
+async def run_full_pipeline(file_path: str, safe_filename: str, message: types.Message, status_message: types.Message):
     try:
-        # Если PDF - конвертируем первую страницу в картинку
-        if is_pdf:
-            doc = fitz.open(file_path)
-            page = doc.load_page(0)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # Увеличиваем четкость
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        else:
-            img = Image.open(file_path)
-
-        # --- УЛУЧШЕНИЕ КАРТИНКИ ---
-        img = img.convert('L') # В черно-белый
-        img = ImageOps.autocontrast(img)
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(2.0) # Задираем контраст
-
-        # Распознавание
-        text = pytesseract.image_to_string(img, lang='rus+eng')
+        await status_message.edit_text("PDF downloaded. Converting pages...")
+        image_paths = convert_pdf_to_images(file_path)
         
-        # Логика поиска цифр (площади и стены)
-        areas = re.findall(r'(\d+[.,]\d+)', text)
-        sizes = re.findall(r'\b(\d{4})\b', text)
+        if not image_paths:
+            await status_message.edit_text("Error: PDF file is empty or corrupted.")
+            return
 
-        res = "✅ **Результат анализа:**\n\n"
-        valid_areas = [a for a in areas if 1.5 < float(a.replace(',', '.')) < 250.0]
-        if valid_areas:
-            res += f"📐 Площади: {', '.join(valid_areas)} м²\n"
+        await status_message.edit_text(f"Pages: {len(image_paths)}. Diagnosing AI...")
+        img_path = image_paths[0]
         
-        if sizes:
-            m_sizes = [float(s)/1000 for s in sizes]
-            unique_s = list(set(m_sizes))
-            perim = sum(unique_s)
-            res += f"🧱 Стены (м): {', '.join(map(str, sorted(unique_s)))}\n"
-            res += f"🏃 **Периметр: {perim:.2f} м**\n"
-            res += f"🎨 **Шпаклевка (h=2.7): {perim * 2.7:.2f} м²**"
-
-        await update.message.reply_text(res if (valid_areas or sizes) else "🤖 Не смог разобрать цифры. Попробуй скинуть PDF файлом или скриншот покрупнее.")
+        await status_message.edit_text("Testing AI Vision on Page 1...")
+        page_data = await analyze_project_page(img_path)
+        debug_output = page_data.get("debug_text", "No debug text returned.")
+        
+        await status_message.delete()
+        await message.answer(f"AI DIAGNOSTICS RESULT (Page 1):\n\n{debug_output}")
 
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
-    finally:
-        if os.path.exists(file_path): os.remove(file_path)
+        error_details = traceback.format_exc()
+        await status_message.edit_text(f"Pipeline error:\n{error_details}")
 
-if __name__ == '__main__':
-    Thread(target=run_flask).start()
-    TOKEN = "8693522094:AAFv_YYf1bxLrslkhawmEhSujTUdOr75dTM"
-    bot = ApplicationBuilder().token(TOKEN).build()
-    # Слушаем всё: фото и любые документы
-    bot.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_document))
-    bot.run_polling()
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    await message.answer("Welcome! Send me a Google Drive link.")
+
+@dp.message(F.text & (F.text.contains("http://") | F.text.contains("https://")))
+async def handle_pdf_link(message: types.Message):
+    raw_url = message.text.strip()
+    status_message = await message.answer("Checking link...")
+    
+    try:
+        direct_url = convert_to_direct_download_url(raw_url)
+        safe_filename = f"project_{message.from_user.id}.pdf"
+        file_path = os.path.join(DOWNLOADS_DIR, safe_filename)
+        
+        headers = {"User-Agent": "Mozilla/5.0"}
+        timeout = aiohttp.ClientTimeout(total=300, connect=30)
+        
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            await status_message.edit_text("Downloading file...")
+            async with session.get(direct_url) as response:
+                if response.status == 200:
+                    with open(file_path, "wb") as f:
+                        f.write(await response.read())
+                    await run_full_pipeline(file_path, safe_filename, message, status_message)
+                else:
+                    await status_message.edit_text(f"Download failed. Status: {response.status}")
+    except Exception as e:
+        error_details = traceback.format_exc()
+        await status_message.edit_text(f"Network error:\n{error_details}")
+
+async def main():
+    bot = Bot(token=BOT_TOKEN)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+    
