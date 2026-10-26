@@ -25,8 +25,7 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Конвертирует ключевые листы чертежей PDF в легкие RGB-картинки и 
-    отправляет их через base64 в зрячую модель gpt-4o-mini.
+    Конвертирует листы чертежей PDF в RGB-картинки и отправляет их в gpt-4o-mini.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -39,7 +38,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 "type": "text",
                 "text": (
                     "Ты — опытный инженер-сметчик в сфере отделки и ремонта квартир.\n"
-                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, plans полов и стен.\n"
+                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, планы полов и стен.\n"
                     "Рассмотри все визуальные комментарии дизайнера, сноски и стрелочки (нахождение фанерных закладных, усиление профилей под инсталляции, скрытые двери invisible).\n"
                     "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши под шторы — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь пола.\n\n"
                     f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
@@ -90,7 +89,15 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
         if response.status_code == 200:
             response_json = response.json()
-            raw_content = response_json["choices"]['message']["content"].strip()
+            
+            # АБСОЛЮТНАЯ ЗАЩИТА: Безопасно извлекаем текст из ответа любой структуры
+            choices = response_json.get("choices", [])
+            if not choices or not isinstance(choices, list):
+                return {"error": f"Неверная структура ответа API: {response.text}"}
+                
+            first_choice = choices[0]
+            message = first_choice.get("message", {})
+            raw_content = message.get("content", "").strip()
             
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
@@ -132,5 +139,5 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     except Exception as e:
         if os.path.exists(temp_download_path):
             os.remove(temp_download_path)
-        return {"error": f" Ошибка при загрузке по ссылке: {str(e)}"}
+        return {"error": f"Ошибка при загрузке по ссылке: {str(e)}"}
         
