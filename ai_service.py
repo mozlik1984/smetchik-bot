@@ -1,5 +1,6 @@
 import base64
 import json
+import asyncio
 import aiohttp
 from config import AI_COMPLETION_URL, OPENAI_API_KEY
 from database import load_price_list
@@ -9,17 +10,18 @@ def encode_image_to_base64(image_path: str) -> str:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 async def analyze_project_page(image_path: str) -> dict:
-    # 1. Загружаем твой полный прайс со всеми 29 позициями динамически
     current_prices = load_price_list()
-    
-    # Формируем красивый список для ИИ, чтобы он видел русские названия и коды
+    available_keys = list(current_prices.keys())
+
+    if not available_keys:
+        available_keys = ["shkaturka_sten", "laminat_zamok", "keramogranit_60x120", "pie_sten_pod_pokrasku", "invisible_doors_complex"]
+
     price_items_v2 = []
     for key, item in current_prices.items():
         price_items_v2.append(f"- Code: '{key}' | Name in Russian: '{item['name']}'")
         
     price_list_context = "\n".join(price_items_v2)
 
-    # 2. Создаем гибкий промпт, который заставит ИИ сопоставлять данные с любым прайсом
     system_prompt = (
         "You are an expert construction estimation engineer. Analyze the provided Russian blueprint or table image.\n"
         "Your goal is to extract construction and finishing works, their quantities (volumes, areas, counts) and match them strictly to the items from the allowed price list below.\n\n"
@@ -78,15 +80,22 @@ async def analyze_project_page(image_path: str) -> dict:
         "temperature": 0.0
     }
 
-    async with aiohttp.ClientSession() as session:
+    # Добавляем увеличенный таймаут на ожидание ответа ИИ (до 60 секунд на страницу)
+    timeout = aiohttp.ClientTimeout(total=60)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
+            # Небольшая пауза перед запросом, чтобы не перегружать бесплатный процессор Render
+            await asyncio.sleep(1.0)
             async with session.post(AI_COMPLETION_URL, headers=headers, json=payload) as response:
                 if response.status == 200:
                     result = await response.json()
                     content = result["choices"]["message"]["content"]
                     return json.loads(content)
                 else:
+                    print(f"ProxyAPI Server Error: {response.status}")
                     return {}
         except Exception as e:
+            print(f"Network error in ai_service: {e}")
             return {}
             
