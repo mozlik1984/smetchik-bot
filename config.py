@@ -12,6 +12,9 @@ URL_COLON = ":"
 URL_SLASH = "/"
 URL_DOUBLE_SLASH = URL_SLASH + URL_SLASH
 URL_DOT = "."
+URL_QUESTION = "?"
+URL_AND = "&"
+URL_EQUAL = "="
 
 # Посимвольная сборка хоста ProxyAPI: api.proxyapi.ru/v1
 HOST_PROXY = "api"
@@ -28,5 +31,15 @@ AI_COMPLETIONS_URL = (
     f"{PATH_CHAT}{URL_SLASH}{PATH_COMPLETIONS}"
 )
 
-# Маркер текстовых параметров (чтобы бот понимал, что это данные объекта)
-TEXT_DATA_MARKER = "площадь"
+# Компоненты для работы с Google Диском
+HOST_GOOGLE_DRIVE = "drive"
+HOST_GOOGLE_MAIN = "google"
+HOST_GOOGLE_ZONE = "com"
+
+GOOGLE_DRIVE_MARKER = f"{HOST_GOOGLE_DRIVE}{URL_DOT}{HOST_GOOGLE_MAIN}{URL_DOT}{GOOGLE_DRIVE_MARKER_ZONE if 'GOOGLE_DRIVE_MARKER_ZONE' in locals() else HOST_GOOGLE_ZONE}"
+
+PATH_MARKER_FILE_D = f"{URL_SLASH}file{URL_SLASH}d{URL_SLASH}"
+PARAM_ID_EQUAL = f"id{URL_EQUAL}"
+PARAM_EXPORT_DOWNLOAD = f"export{URL_EQUAL}download"
+
+API_GOOGLE_UC = f"{URL_SCHEME}{URL_COLON}{URL_DOUBLE_SLASH}{HOST_GOOGLE_DRIVE}{URL_DOT}{HOST_GOOGLE_MAIN}{URL_DOT}{HOST_GOOGLE_ZONE}{URL_SLASH}uc"
