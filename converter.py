@@ -7,7 +7,8 @@ def convert_pdf_to_images(pdf_file_path: str) -> list:
         return []
 
     base_name = os.path.basename(pdf_file_path)
-    folder_name = os.path.splitext(base_name)
+    # Берем строго первый элемент [0] (имя файла без расширения) вместо всего кортежа
+    folder_name = os.path.splitext(base_name)[0]
     
     project_images_dir = os.path.join(DOWNLOADS_DIR, folder_name)
     os.makedirs(project_images_dir, exist_ok=True)
@@ -16,12 +17,8 @@ def convert_pdf_to_images(pdf_file_path: str) -> list:
 
     try:
         doc = fitz.open(pdf_file_path)
-        
-        # Проходим циклом по абсолютно всем страницам проекта
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
-            
-            # Оптимальный зум 1.5 экономит память и оставляет текст четким
             zoom = 1.5
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
@@ -31,9 +28,7 @@ def convert_pdf_to_images(pdf_file_path: str) -> list:
             
             pix.save(image_path)
             image_paths.append(image_path)
-            
             pix = None
-            
         doc.close()
     except Exception as e:
         print(f"Error: {e}")
