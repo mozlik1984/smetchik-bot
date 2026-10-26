@@ -58,8 +58,8 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
         
         data = {
-            # Вызываем актуальную бесплатную модель Llama 3.3
-            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            # Указываем точный бесплатный слаг модели, предложенный самим сервером
+            "model": "meta-llama/llama-3.3-70b-instruct",
             "messages": [
                 {
                     "role": "system", 
@@ -97,7 +97,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
     """
-    Скачивает большой файл по ссылке на server Render и отправляет в OpenRouter.
+    Скачивает большой файл по ссылке на сервер Render и отправляет в OpenRouter.
     """
     file_id = extract_google_file_id(project_url)
     if not file_id:
