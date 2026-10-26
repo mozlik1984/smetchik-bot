@@ -3,4 +3,5 @@ requests
 openpyxl
 python-dotenv
 Flask
-google-genai
+google-generativeai
+
