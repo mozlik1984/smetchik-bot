@@ -11,7 +11,6 @@ def extract_google_file_id(url):
     if config.GOOGLE_DRIVE_MARKER not in url:
         return None
     try:
-        # Проверяем классический путь /file/d/
         if config.PATH_MARKER_FILE_D in url:
             start = url.find(config.PATH_MARKER_FILE_D) + len(config.PATH_MARKER_FILE_D)
             end = url.find(config.URL_SLASH, start)
@@ -21,7 +20,6 @@ def extract_google_file_id(url):
                 return url[start:]
             return url[start:end]
             
-        # Проверяем старый/альтернативный параметр id=
         elif config.PARAM_ID_EQUAL in url:
             start = url.find(config.PARAM_ID_EQUAL) + len(config.PARAM_ID_EQUAL)
             end = url.find(config.URL_AND, start)
@@ -50,7 +48,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "Внимательно изучи прикрепленный PDF-файл дизайн-проекта.\n\n"
             f"Используй ТОЛЬКО этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
             "Твоя задача:\n"
-            "1. Найди в проекте ведомости отделки, plans полов, стен и потолков.\n"
+            "1. Найди в проекте ведомости отделки, планы полов, стен и потолков.\n"
             "2. Рассчитай точные площади (кв.м) или погонные метры (п.м) по каждой подходящей позиции из прайса.\n"
             "3. Подставь цены из прайса и посчитай итоговую стоимость.\n"
             "4. Верни ответ СТРОГО в формате JSON-массива объектов.\n\n"
@@ -60,7 +58,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
         
         data = {
-            "model": "gpt-4o",
+            "model": "gpt-4o-mini",  # Экономичная модель: снижает траты в 30 раз!
             "messages": [
                 {
                     "role": "system", 
@@ -104,8 +102,6 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     if not file_id:
         return {"error": "Не удалось распознать ID файла в ссылке Google Диска. Убедитесь, что ссылка верная."}
         
-    # Собираем прямую ссылку полностью из безопасных переменных:
-    # https://google.com
     download_url = (
         f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
         f"{config.PARAM_EXPORT_DOWNLOAD}{config.URL_AND}"
