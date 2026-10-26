@@ -25,8 +25,8 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Сканирует расширенный диапазон страниц проекта (до 40 листов) в хорошем разрешении,
-    чтобы найти развертки стен, пироги под покраску, скрытые плинтусы и перегородки.
+    Интеллектуально отбирает только целевые листы с развертками, плинтусами и штукатуркой,
+    отправляя в gpt-4o компактный и точный визуальный пакет.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -52,22 +52,31 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
 
         content_parts = [{"type": "text", "text": prompt_text}]
+        
+        # Ключевые слова для интеллектуального поиска скрытых отделочных работ на листах
+        keywords = ["развертк", "ведомост", "экспликац", "план стен", "план полов", "плинтус", "покраск", "штукатур", "демонтаж"]
 
         with pdfplumber.open(file_path) as pdf:
-            total_pages = len(pdf.pages)
+            pages_to_send = []
             
-            # ИСПРАВЛЕНО: Расширяем диапазон с 5 по 40 страницу (в индексах Python это 4-39),
-            # чтобы захватить абсолютно все развертки стен, планы перегородок и электрику.
-            start_page = min(4, total_pages - 1)
-            end_page = min(40, total_pages)
+            # Умный постраничный отбор листов
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                text_lower = text.lower()
+                
+                # Если лист содержит чертежную сметную информацию
+                if any(kw in text_lower for kw in keywords):
+                    pages_to_send.append(page)
             
-            if start_page >= end_page:
-                start_page = 0
-                end_page = total_pages
-                
-            for i in range(start_page, end_page):
-                page = pdf.pages[i]
-                
+            # Защита: если чертежи сохранены в кривых и текст не извлекся, берем ключевой диапазон разверток (с 15 по 25 листы)
+            if not pages_to_send:
+                total = len(pdf.pages)
+                pages_to_send = pdf.pages[min(14, total-1):min(25, total)]
+            
+            # Жестко ограничиваем до 8 самых информативных страниц для стабильности шлюза
+            final_pages = pages_to_send[:8]
+
+            for page in final_pages:
                 pix = page.to_image(resolution=130)
                 pil_img = pix.original
                 
@@ -75,7 +84,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                     pil_img = pil_img.convert("RGB")
                 
                 img_buffer = io.BytesIO()
-                pil_img.save(img_buffer, format="JPEG", quality=70)
+                pil_img.save(img_buffer, format="JPEG", quality=75)
                 img_bytes = img_buffer.getvalue()
                 
                 img_base64 = base64.b64encode(img_bytes).decode("utf-8")
@@ -99,7 +108,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "temperature": 0.05
         }
 
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=180)
+        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
 
         if response.status_code == 200:
             response_json = response.json()
