@@ -90,17 +90,18 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         if response.status_code == 200:
             response_json = response.json()
             
-            choices = response_json.get("choices", [])
-            if not choices or not isinstance(choices, list):
-                return {"error": f"Неверная структура ответа API: {response.text}"}
+            # Строгий и безопасный разбор списка choices по числовому индексу
+            choices_list = response_json.get("choices")
+            if choices_list and isinstance(choices_list, list) and len(choices_list) > 0:
+                first_choice = choices_list[0]
+                message_obj = first_choice.get("message", {})
+                raw_content = message_obj.get("content", "").strip()
                 
-            first_choice = choices[0]
-            message = first_choice.get("message", {})
-            raw_content = message.get("content", "").strip()
-            
-            if raw_content.startswith("```"):
-                raw_content = raw_content.strip("```").strip("json").strip()
-            return json.loads(raw_content)
+                if raw_content.startswith("```"):
+                    raw_content = raw_content.strip("```").strip("json").strip()
+                return json.loads(raw_content)
+            else:
+                return {"error": "API вернул пустой или некорректный список choices"}
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
 
