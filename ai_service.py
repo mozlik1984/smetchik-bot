@@ -25,8 +25,8 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Оптимизированная конвертация чертежей в сбалансированном качестве 
-    для предотвращения зависаний процессора Render.
+    Мгновенно обрабатывает проект без тяжелого текстового сканирования страниц,
+    что полностью исключает зависания процессора Render.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -47,32 +47,30 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
 
         content_parts = [{"type": "text", "text": prompt_text}]
-        target_keywords = ["ведомость", "экспликация", "план полов", "план стен", "развертка", "демонтаж", "монтаж перегородок", "электрик", "сантех"]
 
         with pdfplumber.open(file_path) as pdf:
-            pages_to_send = []
+            total_pages = len(pdf.pages)
             
-            for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                page_text_lower = page_text.lower()
-                if any(kw in page_text_lower for kw in target_keywords):
-                    pages_to_send.append(page)
+            # Настраиваем диапазон: берем листы с 6 по 16 (в индексах Python это 5-15)
+            # Именно там лежат все сметные таблицы, ведомости полов, стен, электрика и сантехника.
+            start_page = min(5, total_pages - 1)
+            end_page = min(15, total_pages)
             
-            if not pages_to_send:
-                pages_to_send = pdf.pages[:10]
-            
-            # Ограничиваем до 8 страниц для гарантированной стабильности памяти
-            final_pages = pages_to_send[:8]
-
-            for page in final_pages:
-                # ОПТИМИЗИРОВАНО: 130 DPI — идеальный баланс четкости букв и легкости для процессора
-                pix = page.to_image(resolution=130)
+            # Если в проекте очень мало страниц, берем всё что есть
+            if start_page >= end_page or total_pages <= 5:
+                start_page = 0
+                end_page = min(total_pages, 8)
+                
+            for i in range(start_page, end_page):
+                page = pdf.pages[i]
+                
+                # Мгновенно делаем легкий снимок страницы без текстового разбора
+                pix = page.to_image(resolution=120)
                 pil_img = pix.original
                 
                 if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
                 
-                # ОПТИМИЗИРОВАНО: Сжатие 70% снижает вес в памяти в 3 раза, убирая зависания
                 img_buffer = io.BytesIO()
                 pil_img.save(img_buffer, format="JPEG", quality=70)
                 img_bytes = img_buffer.getvalue()
