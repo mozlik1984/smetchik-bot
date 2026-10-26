@@ -21,7 +21,8 @@ def extract_google_file_id(url):
     return None
 
 def analyze_project_file_with_ai(file_path, price_list_text):
-    return {"error": "Пожалуйста, отправьте ссылку на Google Диск."}
+    """Заглушка для сохранения структуры вызовов"""
+    return {"error": "Пожалуйста, используйте отправку ссылок на Google Диск."}
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
     file_id = extract_google_file_id(project_url)
@@ -34,7 +35,6 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
         f"id{config.URL_EQUAL}{file_id}"
     )
 
-    # Исправленные заголовки авторизации для OpenRouter
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
         "Content-Type": "application/json",
