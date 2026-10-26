@@ -3,5 +3,3 @@ requests
 openpyxl
 python-dotenv
 Flask
-google-generativeai
-
