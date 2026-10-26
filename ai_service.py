@@ -1,12 +1,13 @@
 import os
 import json
 import requests
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 import config
 
 def extract_google_file_id(url):
-    """Безопасно извлекает ID файла без текстовых литералов в коде."""
+    """
+    Безопасно извлекает ID файла без текстовых литералов в коде.
+    """
     if config.GOOGLE_DRIVE_MARKER not in url:
         return None
     try:
@@ -26,23 +27,23 @@ def extract_google_file_id(url):
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
     Загружает файл в бесплатное облако Google Gemini и проводит полный
-    визуальный анализ чертежей, размеров и спецификаций.
+    визуальный анализ чертежей, размеров и спецификаций через стабильный SDK.
     """
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
         return {"error": "В настройках Render не найден токен GEMINI_API_KEY"}
         
     try:
-        # Инициализируем официальный бесплатный клиент Google AI
-        client = genai.Client(api_key=gemini_key)
+        # Настройка стабильной конфигурации Google AI
+        genai.configure(api_key=gemini_key)
         
         # 1. Загружаем физический файл в ИИ-контекст Google (он понимает графику PDF изнутри)
-        uploaded_file = client.files.upload(file=file_path)
+        uploaded_file = genai.upload_file(path=file_path)
         
         prompt = (
-            "Ты — профессиональный инженер-сметчик. Перед тобой дизайн-проект в формате PDF.\n"
+            "Ты — профессиональный инженер-сметчик. Перед тобой дизайн-проекты в формате PDF.\n"
             "Внимательно изучи все чертежи, графические схемы, ведомости отделки, планы полов, стен и потолков.\n"
-            "Твоя задача — рассмотреть все визуальные размеры, сноски и спецификации.\n\n"
+            "Твоя задача — рассмотреть все визуальные размеры, сноски и спецификации на планах.\n\n"
             f"Используй ТОЛЬКО этот прайс-лист на работы:\n{price_list_text}\n\n"
             "Выполни расчет:\n"
             "1. Рассчитай точные площади (кв.м) и длины (п.м) по каждому виду отделочных работ из прайса.\n"
@@ -51,18 +52,15 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "Структура объекта: {'name': 'название', 'unit': 'кв.м', 'count': 10, 'price': 900, 'total': 9000}"
         )
         
-        # 2. Запускаем мультимодальный анализ (Файл + Текст) через Gemini 1.5 Flash
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=[uploaded_file, prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json"  # Жестко требуем чистый JSON на выходе
-            )
+        # 2. Запускаем мультимодальный визуальный анализ через Gemini 1.5 Flash
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(
+            [uploaded_file, prompt],
+            generation_config={"response_mime_type": "application/json", "temperature": 0.1}
         )
         
-        # 3. Безопасно удаляем файл из облака Google после завершения расчета
-        client.files.delete(name=uploaded_file.name)
+        # 3. Безопасно удаляем временный файл из облака Google после завершения расчета
+        genai.delete_file(uploaded_file.name)
         
         raw_text = response.text.strip()
         return json.loads(raw_text)
@@ -93,7 +91,6 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
                     
-        # Запускаем полный визуальный анализ файла
         result = analyze_project_file_with_ai(temp_download_path, price_list_text)
         
         if os.path.exists(temp_download_path):
