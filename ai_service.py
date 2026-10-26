@@ -49,7 +49,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             f"Используй ТОЛЬКО этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
             "Твоя задача:\n"
             "1. Найди в проекте ведомости отделки, планы полов, стен и потолков.\n"
-            "2. Рассчитай точные площади (кв.м) или погонные метры (п.м) по каждый подходящей позиции из прайса.\n"
+            "2. Рассчитай точные площади (кв.м) или погонные метры (п.м) по каждой подходящей позиции из прайса.\n"
             "3. Подставь цены из прайса и посчитай итоговую стоимость.\n"
             "4. Верни ответ СТРОГО в формате JSON-массива объектов.\n\n"
             "Формат объектов в массиве:\n"
@@ -58,8 +58,8 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
         
         data = {
-            # Вызываем бесплатную флагманскую модель
-            "model": "meta-llama/llama-3.1-405b-instruct:free",
+            # Вызываем актуальную бесплатную модель Llama 3.3
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
             "messages": [
                 {
                     "role": "system", 
@@ -97,7 +97,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
     """
-    Скачивает большой файл по ссылке на сервер Render и отправляет в OpenRouter.
+    Скачивает большой файл по ссылке на server Render и отправляет в OpenRouter.
     """
     file_id = extract_google_file_id(project_url)
     if not file_id:
