@@ -9,34 +9,41 @@ def encode_image_to_base64(image_path: str) -> str:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 async def analyze_project_page(image_path: str) -> dict:
+    # 1. Загружаем твой полный прайс со всеми 29 позициями динамически
     current_prices = load_price_list()
-    available_keys = list(current_prices.keys())
+    
+    # Формируем красивый список для ИИ, чтобы он видел русские названия и коды
+    price_items_v2 = []
+    for key, item in current_prices.items():
+        price_items_v2.append(f"- Code: '{key}' | Name in Russian: '{item['name']}'")
+        
+    price_list_context = "\n".join(price_items_v2)
 
-    if not available_keys:
-        available_keys = ["shkaturka_sten", "laminat_zamok", "keramogranit_60x120", "pie_sten_pod_pokrasku", "invisible_doors_complex"]
-
+    # 2. Создаем гибкий промпт, который заставит ИИ сопоставлять данные с любым прайсом
     system_prompt = (
-        "You are an expert estimation engineer. Analyze the provided Russian blueprint or table image. "
-        "Find construction and finishing works, their quantities (volumes, areas) and map them to the allowed keys.\n\n"
-        f"ALLOWED KEYS LIST: {', '.join(available_keys)}\n\n"
-        "CRITICAL MAPPING RULES FOR RUSSIAN TEXT IN IMAGE:\n"
-        "- If you see Russian words like 'Shtukatourka', 'Shtukaturnye', 'Vravnivanie sten' -> map to 'shkaturka_sten'\n"
-        "- If you see Russian words like 'Laminat', 'Kvarcvinil', 'Pol' or floor finish quantities -> map to 'laminat_zamok'\n"
-        "- If you see Russian words like 'Keramogranit', 'Plitka', '60x120' -> map to 'keramogranit_60x120'\n"
-        "- If you see Russian words like 'Pokraska sten', 'Steny pod pokrasku', 'Okraska' -> map to 'pie_sten_pod_pokrasku'\n"
-        "- If you see Russian words like 'Skrytaya dver', 'Invisible' -> map to 'invisible_doors_complex'\n\n"
+        "You are an expert construction estimation engineer. Analyze the provided Russian blueprint or table image.\n"
+        "Your goal is to extract construction and finishing works, their quantities (volumes, areas, counts) and match them strictly to the items from the allowed price list below.\n\n"
+        "ALLOWED PRICE LIST (Code and Russian Name):\n"
+        f"{price_list_context}\n\n"
+        "CRITICAL MAPPING & EXTRACTION RULES:\n"
+        "1. Carefully read all tables, floor plans, keys, notes, and specifications in the image.\n"
+        "2. Match the found Russian terms or synonyms with the 'Name in Russian' from the allowed list, then extract the corresponding 'Code'.\n"
+        "3. For example, if you see wall painting or 'покраска стен' or 'стены под покраску', map it to code 'pie_sten_pod_pokrasku'.\n"
+        "4. If you see tiles, 'керамогранит' or 'плитка 60х120', map it to code 'keramogranit_60x120'.\n"
+        "5. If you see partitions or 'возведение перегородок', map it to code 'peregorodki_gkl'.\n"
+        "6. Extract values as floating point numbers or integers. Do not include units (like m2, pcs) in values.\n\n"
         "OUTPUT FORMAT Rules:\n"
         "1. Return output STRICTLY as a valid JSON object.\n"
-        "2. Key must be ONLY from the allowed keys list, value must be a number (volume, quantity).\n"
-        "3. If no matching construction data found on this page, return an empty JSON object: {}\n"
+        "2. Key must be ONLY the technical 'Code' from the allowed list, value must be a number (volume, quantity).\n"
+        "3. If no matching construction or finishing data found on this page, return an empty JSON object: {}\n"
         "Example response:\n"
-        '{"shkaturka_sten": 120.5, "laminat_zamok": 45.0}'
+        '{"shkaturka_sten": 120.5, "peregorodki_gkl": 45.0, "keramogranit_60x120": 15.3}'
     )
 
     try:
         base64_image = encode_image_to_base64(image_path)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error base64: {e}")
         return {}
 
     headers = {
@@ -57,7 +64,7 @@ async def analyze_project_page(image_path: str) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": "Find finishing volumes from this Russian project image and map to JSON."
+                        "text": "Extract finishing volumes from this blueprint image and map them to the allowed price list codes."
                     },
                     {
                         "type": "image_url",
