@@ -39,7 +39,6 @@ def send_welcome(message):
 def handle_text_data(message):
     user_text = message.text.strip()
     
-    # Проверяем, содержит ли текст ключевое слово "площадь" для валидации
     if config.TEXT_DATA_MARKER not in user_text.lower():
         bot.reply_to(message, "❌ Пожалуйста, укажите параметры объекта (например: Площадь пола...)")
         return
