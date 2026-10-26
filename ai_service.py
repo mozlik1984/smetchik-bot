@@ -25,7 +25,7 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Конвертирует листы чертежей PDF in RGB-картинки и отправляет их в gpt-4o-mini.
+    Конвертирует листы чертежей PDF в RGB-картинки и отправляет их в gpt-4o-mini с жестким промптом.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -33,22 +33,20 @@ def analyze_project_file_with_ai(file_path, price_list_text):
     }
 
     try:
-        content_parts = [
-            {
-                "type": "text",
-                "text": (
-                    "Ты — опытный инженер-сметчик в сфере отделки и ремонта квартир.\n"
-                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, планы полов и стен.\n"
-                    "Рассмотри все визуальные комментарии дизайнера, сноски и стрелочки (нахождение фанерных закладных, усиление профилей под инсталляции, скрытые двери invisible).\n"
-                    "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши под шторы — считай ГКЛ строго в погонных м ниш, не раздувай смету на всю площадь пола.\n\n"
-                    f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
-                    "Выполни расчет:\n"
-                    "1. Рассчитай точные площади (кв.м), длины (п.м) и количество (шт) по каждой подходящей позиции из прайса.\n"
-                    "2. Сформируй смету строго в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
-                    "Формат ответа: [{\"name\": \"название\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
-                )
-            }
-        ]
+        # Усиленный сметный промпт (убирает галлюцинации ИИ)
+        prompt_text = (
+            "Ты — строгий и точный инженер-сметчик. Перед тобой графические листы дизайн-проекта.\n"
+            "Твоя задача — составить смету СТРОГО на основе тех объемов и комментариев, которые физически нарисованы или написаны на чертежах.\n\n"
+            "ПРАВИЛА АНАЛИЗА:\n"
+            "1. НЕ придумывай работы от себя. Если в проекте потолок натяжной — НЕ закладывай сплошную штукатурку/шпаклевку потолка из ГКЛ.\n"
+            "2. Внимательно читай текстовые сноски со стрелочками на планах стен и перегородок. Найди места, где дизайнер пишет: 'закладная из фанеры', 'скрытая дверь Invisible', 'усиление инсталляции'.\n"
+            "3. Объемы (кв.м, п.м, шт) бери исключительно из экспликаций помещений и ведомостей отделки на листах.\n\n"
+            f"Используй ТОЛЬКО этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
+            "Верни ответ СТРОГО в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
+            "Формат ответа: [{\"name\": \"название работы строго из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
+        )
+
+        content_parts = [{"type": "text", "text": prompt_text}]
 
         with pdfplumber.open(file_path) as pdf:
             max_pages = min(len(pdf.pages), 15)
@@ -82,7 +80,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                     "content": content_parts
                 }
             ],
-            "temperature": 0.1
+            "temperature": 0.05  # Снижаем температуру до минимума для максимальной точности расчетов
         }
 
         response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
@@ -90,18 +88,17 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         if response.status_code == 200:
             response_json = response.json()
             
-            # ЧЁТКИЙ ИСПРАВЛЕННЫЙ ИНДЕКС: Получаем первый элемент списка choices
-            choices_list = response_json.get("choices")
-            if choices_list and isinstance(choices_list, list) and len(choices_list) > 0:
-                first_choice = choices_list[0]
-                message_obj = first_choice.get("message", {})
-                raw_content = message_obj.get("content", "").strip()
+            choices = response_json.get("choices", [])
+            if not choices or not isinstance(choices, list):
+                return {"error": f"Неверная структура ответа API: {response.text}"}
                 
-                if raw_content.startswith("```"):
-                    raw_content = raw_content.strip("```").strip("json").strip()
-                return json.loads(raw_content)
-            else:
-                return {"error": "API вернул пустой или некорректный список choices"}
+            first_choice = choices[0]
+            message = first_choice.get("message", {})
+            raw_content = message.get("content", "").strip()
+            
+            if raw_content.startswith("```"):
+                raw_content = raw_content.strip("```").strip("json").strip()
+            return json.loads(raw_content)
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
 
