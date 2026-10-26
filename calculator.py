@@ -13,15 +13,23 @@ def calculate_project_estimate(ai_extracted_data: dict, project_name: str = "est
     wb = Workbook()
     ws = wb.active
     ws.title = "Estimate"
-    ws.append(["Name", "Volume", "Unit", "Price", "Cost"])
+    ws.append(["Наименование работ", "Кол-во", "Ед. изм.", "Цена (руб.)", "Стоимость (руб.)"])
     excel_row_index = 2
 
-    for service_key, volume in ai_extracted_data.items():
-        if service_key in current_prices:
-            item = current_prices[service_key]
-            price = item["price"]
-            name = item["name"]
-            unit = item["unit"]
+    # Перебираем то, что прислал ИИ (русские названия)
+    for ai_russian_name, volume in ai_extracted_data.items():
+        matched_item = None
+        
+        # Ищем это русское название в нашем прайсе
+        for price_key, item in current_prices.items():
+            if item["name"].strip().lower() == ai_russian_name.strip().lower():
+                matched_item = item
+                break
+                
+        if matched_item:
+            price = matched_item["price"]
+            name = matched_item["name"]
+            unit = matched_item["unit"]
             
             cost = price * volume
             grand_total += cost
@@ -34,11 +42,10 @@ def calculate_project_estimate(ai_extracted_data: dict, project_name: str = "est
             ws.append([name, volume, unit, price, cost])
             excel_row_index += 1
         else:
-            not_found_keys.append(service_key)
+            not_found_keys.append(ai_russian_name)
 
     ws.append(["ИТОГО:", "", "", "", f"=SUM(E2:E{excel_row_index-1})"])
 
-    # Стойкий и надежный автоподбор ширины колонок Excel через индексы
     for col_idx in range(1, 6):
         max_len = 0
         for row in range(1, excel_row_index + 1):
@@ -61,7 +68,7 @@ def calculate_project_estimate(ai_extracted_data: dict, project_name: str = "est
     report_text += f"\n\n💵 **ИТОГО: {grand_total:,.2f} руб.**"
     
     if not_found_keys:
-        report_text += f"\n\nℹ _Примечание: Следующие коды работ не найдены в прайсе: {', '.join(not_found_keys)}_"
+        report_text += f"\n\nℹ _Примечание: ИИ нашел объемы для позиций, которые не совпали с текстом прайса: {', '.join(not_found_keys)}_"
 
     txt_filename = f"{project_name}_отчет.txt"
     txt_path = os.path.join(DOWNLOADS_DIR, txt_filename)
