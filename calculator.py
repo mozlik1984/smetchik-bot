@@ -1,5 +1,6 @@
 import os
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from database import load_price_list
 from config import DOWNLOADS_DIR
 
@@ -25,32 +26,44 @@ def calculate_project_estimate(ai_extracted_data: dict, project_name: str = "est
             cost = price * volume
             grand_total += cost
             
-            estimate_lines.append(f"- {name}: {volume} {unit} x {price} = {cost:,.2f}")
+            estimate_lines.append(
+                f"🔹 {name}\n"
+                f"   Объем: {volume} {unit} x {price} руб. = {cost:,.2f} руб."
+            )
+            
             ws.append([name, volume, unit, price, cost])
             excel_row_index += 1
         else:
             not_found_keys.append(service_key)
 
-    ws.append(["TOTAL:", "", "", "", f"=SUM(E2:E{excel_row_index-1})"])
+    ws.append(["ИТОГО:", "", "", "", f"=SUM(E2:E{excel_row_index-1})"])
 
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = col.column_letter
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 10)
+    # Стойкий и надежный автоподбор ширины колонок Excel через индексы
+    for col_idx in range(1, 6):
+        max_len = 0
+        for row in range(1, excel_row_index + 1):
+            val = ws.cell(row=row, column=col_idx).value
+            if val:
+                max_len = max(max_len, len(str(val)))
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    excel_filename = f"{project_name}_estimate.xlsx"
+    excel_filename = f"{project_name}_смета.xlsx"
     excel_path = os.path.join(DOWNLOADS_DIR, excel_filename)
     wb.save(excel_path)
 
-    report_text = "ESTIMATE REPORT\n\n"
+    report_text = "📋 **ПРЕДВАРИТЕЛЬНАЯ СМЕТА НА ОТДЕЛOЧНЫЕ РАБОТЫ**\n\n"
     if estimate_lines:
-        report_text += "\n".join(estimate_lines)
+        report_text += "\n\n".join(estimate_lines)
     else:
-        report_text += "No positions calculated."
+        report_text += "⚠ Не удалось рассчитать ни одну позицию."
 
-    report_text += f"\n\nTOTAL: {grand_total:,.2f}"
+    report_text += f"\n\n💵 **ИТОГО: {grand_total:,.2f} руб.**"
+    
+    if not_found_keys:
+        report_text += f"\n\nℹ _Примечание: Следующие коды работ не найдены в прайсе: {', '.join(not_found_keys)}_"
 
-    txt_filename = f"{project_name}_report.txt"
+    txt_filename = f"{project_name}_отчет.txt"
     txt_path = os.path.join(DOWNLOADS_DIR, txt_filename)
     with open(txt_path, "w", encoding="utf-8") as txt_file:
         txt_file.write(report_text)
@@ -61,4 +74,4 @@ def calculate_project_estimate(ai_extracted_data: dict, project_name: str = "est
         "txt_file_path": txt_path,
         "success": True
     }
-  
+    
