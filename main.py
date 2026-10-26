@@ -1,91 +1,90 @@
-import asyncio
-import logging
 import os
-import aiohttp
-import traceback
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+import telebot
+import config
+import ai_service
+import file_generator
 
-from config import (
-    BOT_TOKEN, 
-    DOWNLOADS_DIR,
-    PRICE_LIST_PATH,
-    GOOGLE_DOWNLOAD_BASE,
-    GOOGLE_DRIVE_MARKER
-)
-from ai_service import analyze_project_via_link
+# Инициализируем бота по токену из переменных окружения
+bot = telebot.TeleBot(config.BOT_TOKEN)
 
-logging.basicConfig(level=logging.INFO)
-dp = Dispatcher()
+def get_price_list_content():
+    """Безопасно считывает прайс-лист из локального текстового файла."""
+    file_name = "price_list.txt"
+    if os.path.exists(file_name):
+        with open(file_name, "r", encoding="utf-8") as f:
+            return f.read()
+    return "Прайс-лист пуст или отсутствует на сервере."
 
-def convert_to_direct_download_url(url: str) -> str:
-    url = url.strip()
-    if GOOGLE_DRIVE_MARKER in url:
-        marker = "/file/d/"
-        start_idx = url.find(marker)
-        if start_idx != -1:
-            id_start = start_idx + len(marker)
-            tail = url[id_start:]
-            end_idx = tail.find("/")
-            if end_idx == -1:
-                end_idx = tail.find("?")
-            file_id = tail[:end_idx] if end_idx != -1 else tail
-            if file_id:
-                return f"{GOOGLE_DOWNLOAD_BASE}{file_id}"
-    return url
-
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    await message.answer(
-        "👋 Рад приветствовать! Я специализированный ИИ-сметчик.\n\n"
-        "🔗 Загрузите ваш дизайн-проект в формате PDF на Google Диск, откройте доступ по ссылке и **отправьте ссылку мне**.\n"
-        "Я передам её нейросети вместе с прайс-листом и пришлю вам готовый детальный отчет!"
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    welcome_text = (
+        "👋 Приветствую! Я ваш автоматический бот-сметчик.\n\n"
+        "📥 **Как составить смету:**\n"
+        "Отправьте мне прямую ссылку на дизайн-проект, загруженный в Google Диск или Google Документы.\n\n"
+        "⚠️ Убедитесь, что доступ к файлу по ссылке открыт для всех (читатель/редактор), чтобы нейросеть смогла его изучить."
     )
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
-@dp.message(F.text & (F.text.contains("http://") | F.text.contains("https://")))
-async def handle_link(message: types.Message):
-    raw_url = message.text.strip()
-    status_message = await message.answer("🧠 **Ссылка получена.** Преобразую в поток данных и отправляю в ИИ OpenAI...")
+@bot.message_handler(func=lambda message: True)
+def handle_project_link(message):
+    user_text = message.text.strip()
     
+    # Строгая проверка: содержит ли сообщение маркер Google Диска/Документов из config.py
+    if config.GOOGLE_DRIVE_MARKER not in user_text:
+        bot.reply_to(
+            message, 
+            "❌ Это не похоже на ссылку Google Диска. Пожалуйста, отправьте корректную ссылку на проект."
+        )
+        return
+        
+    status_message = bot.reply_to(
+        message, 
+        "⏳ **Ссылка принята!**\nСчитываю прайс-лист и передаю проект нейросети на анализ. Это может занять до 1-2 минут, пожалуйста, подождите..."
+    )
+    
+    # 1. Читаем прайс-лист
+    price_list = get_price_list_content()
+    
+    # 2. Отправляем данные в нейросеть через наш сервис
+    ai_response = ai_service.analyze_project_with_ai(user_text, price_list)
+    
+    # Проверяем, вернулась ли ошибка при запросе
+    if isinstance(ai_response, dict) and "error" in ai_response:
+        bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=status_message.message_id,
+            text=f"❌ Произошла ошибка при анализе ИИ:\n`{ai_response['error']}`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # 3. Генерируем файлы сметы (.txt и .xlsx)
     try:
-        # Переводим ссылку в формат прямого скачивания файла для ИИ
-        direct_url = convert_to_direct_download_url(raw_url)
-
-        # Читаем наш полный русский прайс-лист из корня
-        price_list_content = ""
-        if os.path.exists(PRICE_LIST_PATH):
-            with open(PRICE_LIST_PATH, "r", encoding="utf-8") as f:
-                price_list_content = f.read()
-                
-        if not price_list_content:
-            await status_message.edit_text("❌ Ошибка: Не найден файл price_list.txt в корне проекта.")
-            return
-
-        # Делаем сквозной запрос в ИИ
-        ai_response = await analyze_project_via_link(direct_url, price_list_content)
+        txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"смета_{message.chat.id}")
         
-        await status_message.delete()
+        bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=status_message.message_id,
+            text="✅ **Смета успешно сформирована!**\nОтправляю готовые документы..."
+        )
         
-        # Отправляем текстовый отчет сметы прямо в чат
-        await message.answer(ai_response)
-        
-        # Создаем файлы отчета на лету
-        txt_path = os.path.join(DOWNLOADS_DIR, f"estimate_{message.from_user.id}.txt")
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(ai_response)
+        # 4. Отправляем файлы пользователю в чат
+        with open(txt_file, "rb") as txt, open(xlsx_file, "rb") as xlsx:
+            bot.send_document(message.chat.id, txt, caption="📄 Смета в текстовом формате")
+            bot.send_document(message.chat.id, xlsx, caption="📊 Смета в формате Excel таблицы")
             
-        txt_file = types.FSInputFile(txt_path)
-        await message.answer_document(document=txt_file, caption="📄 Файл сметы (.txt)")
-
+        # Зачищаем временные файлы с диска после отправки для экономии места
+        if os.path.exists(txt_file): os.remove(txt_file)
+        if os.path.exists(xlsx_file): os.remove(xlsx_file)
+            
     except Exception as e:
-        error_details = traceback.format_exc()
-        await status_message.edit_text(f"❌ Ошибка конвейера:\n```\n{error_details}\n```", parse_mode="Markdown")
-
-async def main():
-    bot = Bot(token=BOT_TOKEN)
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+        bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=status_message.message_id,
+            text=f"❌ Ошибка генерации или отправки файлов сметы: {str(e)}"
+        )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Запуск бесконечного цикла прослушивания бота
+    bot.infinity_polling()
     
