@@ -1,0 +1,5 @@
+shkaturka_sten = Штукатурка стен | 900 | м²
+laminat_zamok = Укладка ламината | 650 | м²
+keramogranit_60x120 = Крупный керамогранит | 3000 | м²
+pie_sten_pod_pokrasku = Пирог стен под покраску | 2400 | м²
+invisible_doors_complex = Двери-невидимки комплекс | 20000 | дверь
