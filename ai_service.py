@@ -1,6 +1,8 @@
+import base64
 import requests
 import json
 import os
+import pdfplumber
 import config
 
 def extract_google_file_id(url):
@@ -22,83 +24,74 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Загружает файл в хранилище ProxyAPI, проводит визуальный анализ чертежей
-    через gpt-4o-mini и зачищает за собой облако.
+    Конвертирует ключевые листы чертежей PDF в легкие картинки и 
+    отправляет их через base64 в зрячую модель gpt-4o-mini.
     """
-    if not config.OPENAI_API_KEY:
-        return {"error": "В настройках Render не найден токен OPENAI_API_KEY"}
-
-    # Сборка базовых URL посимвольно для ProxyAPI
-    base_url_files = f"{config.URL_SCHEME}{config.URL_COLON}{config.URL_DOUBLE_SLASH}api{config.URL_DOT}proxyapi{config.URL_DOT}ru{config.URL_SLASH}v1{config.URL_SLASH}files"
-    
-    headers_auth = {
-        "Authorization": f"Bearer {config.OPENAI_API_KEY}"
+    headers = {
+        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
+        "Content-Type": "application/json"
     }
 
     try:
-        # 1. Загружаем файл в облако OpenAI/ProxyAPI через Files API
-        with open(file_path, "rb") as f:
-            files_data = {
-                "file": (os.path.basename(file_path), f, "application/pdf")
+        content_parts = [
+            {
+                "type": "text",
+                "text": (
+                    "Ты — опытный инженер-сметчик в сфере отделки и ремонта квартир.\n"
+                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, планы полов и стен.\n"
+                    "Рассмотри все визуальные комментарии дизайнера, сноски и стрелочки (нахождение фанерных закладных, усиление профилей под инсталляции, скрытые двери invisible).\n"
+                    "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши под шторы — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь пола.\n\n"
+                    f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
+                    "Выполни расчет:\n"
+                    "1. Рассчитай точные площади (кв.м), длины (п.м) и количество (шт) по каждой подходящей позиции из прайса.\n"
+                    "2. Сформируй смету строго в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
+                    "Формат ответа: [{\"name\": \"название\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
+                )
             }
-            data_purpose = {
-                "purpose": "assistants"  # Назначение для обработки документов
-            }
-            
-            upload_response = requests.post(base_url_files, headers=headers_auth, files=files_data, data=data_purpose, timeout=60)
-            
-        if upload_response.status_code != 200:
-            return {"error": f"Ошибка загрузки файла в ИИ: {upload_response.text}"}
-            
-        file_id = upload_response.json().get("id")
+        ]
 
-        # 2. Формируем запрос на анализ содержимого
-        prompt = (
-            "Ты — опытный инженер-сметчик в отделке и ремонте.\n"
-            "Перед тобой дизайн-проект в прикрепленном PDF-файле.\n"
-            "Внимательно изучи чертежи, графические схемы, планы полов/стен/потолка и спецификации.\n"
-            "Рассмотри все визуальные комментарии дизайнера, стрелочки и выноски (наличие фанерных закладных, усиление профилей под инсталляции, скрытые ниши для штор, двери invisible).\n"
-            "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь.\n\n"
-            f"Используй исключительно этот прайс-лист на работы:\n{price_list_text}\n\n"
-            "Выполни расчет:\n"
-            "1. Рассчитай точные площади (кв.м), длины (п.м) и количество (шт) по каждой подходящей позиции из прайса.\n"
-            "2. Сформируй смету строго в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
-            "Формат ответа: [{\"name\": \"название\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
-        )
+        # Открываем PDF-проект и берем ключевые чертежные листы (ограничим первыми 15 страницами для экономии токенов и памяти)
+        with pdfplumber.open(file_path) as pdf:
+            max_pages = min(len(pdf.pages), 15)
+            for i in range(max_pages):
+                page = pdf.pages[i]
+                
+                # Делаем быстрый легкий снимок страницы чертежа в низком разрешении
+                pix = page.to_image(resolution=100)
+                # Сохраняем во временный буфер байтов
+                import io
+                img_buffer = io.BytesIO()
+                pix.save(img_buffer, format="JPEG", quality=60)
+                img_bytes = img_buffer.getvalue()
+                
+                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                
+                # Добавляем картинку чертежа в запрос к ИИ
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{img_base64}"
+                    }
+                })
 
-        headers_chat = {
-            "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        # Передаем файл через секцию контента
-        chat_data = {
+        data = {
             "model": "openai/gpt-4o-mini",
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "file",
-                            "file": {
-                                "file_id": file_id
-                            }
-                        }
-                    ]
+                    "content": content_parts
                 }
             ],
             "temperature": 0.1
         }
 
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers_chat, json=chat_data, timeout=150)
-
-        # 3. Зачищаем файл из облака ИИ сразу после ответа, чтобы не платить за хранение
-        delete_url = f"{base_url_files}{config.URL_SLASH}{file_id}"
-        requests.delete(delete_url, headers=headers_auth, timeout=20)
+        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
 
         if response.status_code == 200:
-            raw_content = response.json()["choices"][0]["message"]["content"].strip()
+            response_json = response.json()
+            # УСПЕШНО: Используем строгий цифровой индекс [0] для массива choices
+            raw_content = response_json["choices"][0]["message"]["content"].strip()
+            
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
             return json.loads(raw_content)
@@ -106,12 +99,12 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             return {"error": f"API Error {response.status_code}: {response.text}"}
 
     except Exception as e:
-        return {"error": f"Ошибка мультимодального анализа: {str(e)}"}
+        return {"error": f"Ошибка зрячего анализа чертежей: {str(e)}"}
 
 def analyze_project_url_by_downloading(project_url, price_list_text):
     file_id = extract_google_file_id(project_url)
     if not file_id:
-        return {"error": "Не удалось распознать ID файла в ссылке."}
+        return {"error": "Не удалось распознать ID файла."}
         
     download_url = (
         f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
@@ -123,15 +116,13 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     temp_download_path = f"temp/downloaded_{file_id}.pdf"
     
     try:
-        # Скачиваем файл силами сервера Render напрямую
         with requests.get(download_url, stream=True, timeout=60) as r:
             if r.status_code != 200:
-                return {"error": f"Не удалось скачать файл с Google Диска. Статус: {r.status_code}."}
+                return {"error": f"Не удалось скачать файл. Статус: {r.status_code}."}
             with open(temp_download_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
                     
-        # Запускаем локальный анализ загруженного файла
         result = analyze_project_file_with_ai(temp_download_path, price_list_text)
         
         if os.path.exists(temp_download_path):
