@@ -34,7 +34,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         return {"error": "В настройках Render не найден токен GEMINI_API_KEY"}
 
     # Посимвольная сборка официального URL Google Gemini API
-    # https://googleapis.com
     host_gen = "generativelanguage"
     host_main = "googleapis"
     host_zone = "com"
@@ -71,7 +70,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "Структура объекта: {'name': 'название', 'unit': 'кв.м', 'count': 10, 'price': 900, 'total': 9000}"
         )
 
-        # Формируем тело запроса по спецификации Google REST API
         data = {
             "contents": [{
                 "parts": [
