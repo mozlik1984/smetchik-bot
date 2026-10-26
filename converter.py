@@ -15,22 +15,32 @@ def convert_pdf_to_images(pdf_file_path: str) -> list:
     image_paths = []
 
     try:
+        # Открываем PDF
         doc = fitz.open(pdf_file_path)
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            zoom = 3
+        
+        # Для диагностики на бесплатном тарифе берем ТОЛЬКО первую страницу
+        # Это сэкономит оперативную память и не уронит сервер
+        if len(doc) > 0:
+            page = doc.load_page(0)
+            
+            # Снижаем zoom с 3 до 1.5 для жесткой экономии ОЗУ
+            zoom = 1.5
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
             
-            image_name = f"page_{page_num + 1}.jpg"
+            image_name = "page_1.jpg"
             image_path = os.path.join(project_images_dir, image_name)
             
             pix.save(image_path)
             image_paths.append(image_path)
+            
+            # Очищаем память
+            pix = None
+            
         doc.close()
     except Exception as e:
         print(f"Error: {e}")
         return []
 
     return image_paths
-  
+    
