@@ -9,12 +9,30 @@ from aiogram.filters import CommandStart
 from config import (
     BOT_TOKEN, 
     DOWNLOADS_DIR,
-    PRICE_LIST_PATH
+    PRICE_LIST_PATH,
+    GOOGLE_DOWNLOAD_BASE,
+    GOOGLE_DRIVE_MARKER
 )
 from ai_service import analyze_project_via_link
 
 logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
+
+def convert_to_direct_download_url(url: str) -> str:
+    url = url.strip()
+    if GOOGLE_DRIVE_MARKER in url:
+        marker = "/file/d/"
+        start_idx = url.find(marker)
+        if start_idx != -1:
+            id_start = start_idx + len(marker)
+            tail = url[id_start:]
+            end_idx = tail.find("/")
+            if end_idx == -1:
+                end_idx = tail.find("?")
+            file_id = tail[:end_idx] if end_idx != -1 else tail
+            if file_id:
+                return f"{GOOGLE_DOWNLOAD_BASE}{file_id}"
+    return url
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -26,10 +44,13 @@ async def cmd_start(message: types.Message):
 
 @dp.message(F.text & (F.text.contains("http://") | F.text.contains("https://")))
 async def handle_link(message: types.Message):
-    url = message.text.strip()
-    status_message = await message.answer("🧠 **Ссылка получена.** Передаю проект и прайс-лист напрямую в ИИ OpenAI...")
+    raw_url = message.text.strip()
+    status_message = await message.answer("🧠 **Ссылка получена.** Преобразую в поток данных и отправляю в ИИ OpenAI...")
     
     try:
+        # Переводим ссылку в формат прямого скачивания файла для ИИ
+        direct_url = convert_to_direct_download_url(raw_url)
+
         # Читаем наш полный русский прайс-лист из корня
         price_list_content = ""
         if os.path.exists(PRICE_LIST_PATH):
@@ -40,15 +61,15 @@ async def handle_link(message: types.Message):
             await status_message.edit_text("❌ Ошибка: Не найден файл price_list.txt в корне проекта.")
             return
 
-        # Делаем один сквозной запрос в ИИ
-        ai_response = await analyze_project_via_link(url, price_list_content)
+        # Делаем сквозной запрос в ИИ
+        ai_response = await analyze_project_via_link(direct_url, price_list_content)
         
         await status_message.delete()
         
-        # Отправляем подробный текстовый отчет сметы прямо в чат
+        # Отправляем текстовый отчет сметы прямо в чат
         await message.answer(ai_response)
         
-        # Создаем файлы на лету по требованию ИИ
+        # Создаем файлы отчета на лету
         txt_path = os.path.join(DOWNLOADS_DIR, f"estimate_{message.from_user.id}.txt")
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(ai_response)
