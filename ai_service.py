@@ -19,7 +19,7 @@ def analyze_project_text_with_deepseek(user_text, price_list_text):
         f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
         "Твоя задача:\n"
         "1. Сопоставь параметры объекта со строками из предоставленного прайс-листа.\n"
-        "2. Посчитай объемы работ, подставь цены из прайса и рассчитай стоимость по каждой позиции.\n"
+        "2. Посчитай объемы работ, подставь цены из прайса и рассчитать стоимость по каждой позиции.\n"
         "3. Верни ответ СТРОГО в формате JSON-массива объектов, без разметки markdown (без ```json).\n\n"
         "Формат объектов в массиве:\n"
         "[{\"name\": \"название работы\", \"unit\": \"кв.м\", \"count\": 50, \"price\": 900, \"total\": 45000}]\n"
@@ -39,7 +39,10 @@ def analyze_project_text_with_deepseek(user_text, price_list_text):
         response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=60)
         
         if response.status_code == 200:
-            raw_content = response.json()["choices"]["message"]["content"].strip()
+            response_json = response.json()
+            # ИСПРАВЛЕНО: Добавлен индекс [0] для корректного чтения массива choices
+            raw_content = response_json["choices"][0]["message"]["content"].strip()
+            
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
             return json.loads(raw_content)
