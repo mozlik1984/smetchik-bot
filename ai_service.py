@@ -25,8 +25,8 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Мгновенно обрабатывает проект без тяжелого текстового сканирования страниц,
-    что полностью исключает зависания процессора Render.
+    Анализирует чертежи в высоком качестве с жестким требованием 
+    структуры ответа через JSON Mode.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -42,7 +42,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "2. Внимательно читай текстовые сноски, спецификации Архикада и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
             "3. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
             f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
-            "Выполни расчет и верни ответ СТРОГО в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
+            "Верни ответ строго в формате JSON-массива объектов. Никакого текста до или после массива быть не должно.\n"
             "Формат ответа: [{\"name\": \"точное название работы из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
         )
 
@@ -51,12 +51,10 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
             
-            # Настраиваем диапазон: берем листы с 6 по 16 (в индексах Python это 5-15)
-            # Именно там лежат все сметные таблицы, ведомости полов, стен, электрика и сантехника.
+            # Диапазон сметных листов чертежей (с 6 по 16 страницу)
             start_page = min(5, total_pages - 1)
             end_page = min(15, total_pages)
             
-            # Если в проекте очень мало страниц, берем всё что есть
             if start_page >= end_page or total_pages <= 5:
                 start_page = 0
                 end_page = min(total_pages, 8)
@@ -64,7 +62,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             for i in range(start_page, end_page):
                 page = pdf.pages[i]
                 
-                # Мгновенно делаем легкий снимок страницы без текстового разбора
                 pix = page.to_image(resolution=120)
                 pil_img = pix.original
                 
@@ -92,6 +89,8 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                     "content": content_parts
                 }
             ],
+            # ИСПРАВЛЕНО: Принудительный режим JSON Mode на уровне ядра OpenAI
+            "response_format": {"type": "json_object"},
             "temperature": 0.05
         }
 
@@ -107,9 +106,16 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             message = first_choice.get("message", {})
             raw_content = message.get("content", "").strip()
             
-            if raw_content.startswith("```"):
-                raw_content = raw_content.strip("```").strip("json").strip()
-            return json.loads(raw_content)
+            # Исправлено: если JSON пришел обернутым в объект ответа, извлекаем сам массив
+            parsed_json = json.loads(raw_content)
+            if isinstance(parsed_json, dict) and "estimate" in parsed_json:
+                return parsed_json["estimate"]
+            if isinstance(parsed_json, dict) and not isinstance(parsed_json, list):
+                # Если модель вернула объект со списком внутри, берем первый попавшийся массив
+                for key, val in parsed_json.items():
+                    if isinstance(val, list):
+                        return val
+            return parsed_json
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
 
