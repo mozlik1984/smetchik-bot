@@ -25,8 +25,8 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Анализирует чертежи в высоком качестве с жестким требованием 
-    структуры ответа через JSON-объект.
+    Сканирует расширенный диапазон страниц проекта (до 40 листов) в хорошем разрешении,
+    чтобы найти развертки стен, пироги под покраску, скрытые плинтусы и перегородки.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -34,14 +34,13 @@ def analyze_project_file_with_ai(file_path, price_list_text):
     }
 
     try:
-        # ИСПРАВЛЕНО: Теперь ИИ возвращает объект с ключом "estimate", что на 100% совместимо с JSON Mode
         prompt_text = (
-            "Ты — высококлассный инженер-сметчик с глубоким пониманием строительных чертежей.\n"
+            "Ты — высококлассный инженер-сметчик с глубоким пониманием сложных строительных чертежей.\n"
             "Перед тобой графические листы дизайн-проекта. Проведи точный визуальный анализ каждого листа.\n\n"
             "ЖЕСТКИЕ ПРАВИЛА РАСЧЕТА:\n"
-            "1. Ищи сложные, оригинальные отделочные работы строго из прайса. Если на планах и развертках стен указан 'полный пирог под покраску', 'крупноформатный керамогранит', 'авторские обои' или 'скрытые двери Invisible' — подставляй именно их с точными площадями. НЕ упрощай до стандартных работ!\n"
-            "2. Внимательно читай текстовые сноски, спецификации Архикада и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
-            "3. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
+            "1. Ищи сложные, оригинальные отделочные работы строго из прайса. Особое внимание обрати на: 'полный пирог под покраску', 'штукатурка стен', 'плинтус скрытого монтажа', 'откосы', 'демонтаж/монтаж перегородок', 'крупноформатный керамогранит', 'авторские обои' и 'скрытые двери Invisible'. Подставляй именно их с точными объемами. НЕ упрощай до стандартных отделочных работ!\n"
+            "2. Внимательно читай текстовые сноски, спецификации Архикада на развертках стен и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
+            "3. Скрупулезно проанализируй ведомости отделки и экспликации помещений. Суммируй площади стен, полов и погонаж плинтусов со всех чертежей.\n\n"
             f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
             "Верни ответ СТРОГО в формате JSON-объекта, содержащего ключ \"estimate\", в котором лежит массив сметных позиций.\n"
             "Пример структуры ответа:\n"
@@ -57,18 +56,19 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
             
-            # Стабильный диапазон листов чертежей
-            start_page = min(5, total_pages - 1)
-            end_page = min(15, total_pages)
+            # ИСПРАВЛЕНО: Расширяем диапазон с 5 по 40 страницу (в индексах Python это 4-39),
+            # чтобы захватить абсолютно все развертки стен, планы перегородок и электрику.
+            start_page = min(4, total_pages - 1)
+            end_page = min(40, total_pages)
             
-            if start_page >= end_page or total_pages <= 5:
+            if start_page >= end_page:
                 start_page = 0
-                end_page = min(total_pages, 8)
+                end_page = total_pages
                 
             for i in range(start_page, end_page):
                 page = pdf.pages[i]
                 
-                pix = page.to_image(resolution=120)
+                pix = page.to_image(resolution=130)
                 pil_img = pix.original
                 
                 if pil_img.mode != "RGB":
@@ -99,7 +99,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "temperature": 0.05
         }
 
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
+        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=180)
 
         if response.status_code == 200:
             response_json = response.json()
@@ -109,22 +109,16 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 
             first_choice = choices[0]
             message = first_choice.get("message", {})
-            raw_content = message.get("content", "")
+            raw_content = message.get("content", "").strip()
             
-            if not raw_content:
-                return {"error": "ИИ вернул пустой контент ответа."}
-                
-            raw_content = raw_content.strip()
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
                 
             parsed_json = json.loads(raw_content)
             
-            # Извлекаем наш сметный массив из объекта
             if isinstance(parsed_json, dict) and "estimate" in parsed_json:
                 return parsed_json["estimate"]
                 
-            # Защитный перебор на случай, если ключ назван иначе
             if isinstance(parsed_json, dict):
                 for key, val in parsed_json.items():
                     if isinstance(val, list):
@@ -169,4 +163,4 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
         if os.path.exists(temp_download_path):
             os.remove(temp_download_path)
         return {"error": f"Ошибка при загрузке по ссылке: {str(e)}"}
-    
+        
