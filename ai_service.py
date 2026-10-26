@@ -2,6 +2,7 @@ import base64
 import requests
 import json
 import os
+import io
 import pdfplumber
 import config
 
@@ -24,7 +25,7 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Конвертирует ключевые листы чертежей PDF в легкие картинки и 
+    Конвертирует ключевые листы чертежей PDF в легкие RGB-картинки и 
     отправляет их через base64 в зрячую модель gpt-4o-mini.
     """
     headers = {
@@ -50,23 +51,28 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             }
         ]
 
-        # Открываем PDF-проект и берем ключевые чертежные листы (ограничим первыми 15 страницами для экономии токенов и памяти)
+        # Открываем PDF-проект и обрабатываем первые 15 ключевых страниц
         with pdfplumber.open(file_path) as pdf:
             max_pages = min(len(pdf.pages), 15)
             for i in range(max_pages):
                 page = pdf.pages[i]
                 
-                # Делаем быстрый легкий снимок страницы чертежа в низком разрешении
+                # Делаем быстрый снимок страницы чертежа
                 pix = page.to_image(resolution=100)
+                # Переводим в объект PIL Image
+                pil_img = pix.original
+                
+                # ИСПРАВЛЕНО: Принудительно конвертируем любой графический режим (включая mode P) в стандартный RGB для JPEG
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+                
                 # Сохраняем во временный буфер байтов
-                import io
                 img_buffer = io.BytesIO()
-                pix.save(img_buffer, format="JPEG", quality=60)
+                pil_img.save(img_buffer, format="JPEG", quality=60)
                 img_bytes = img_buffer.getvalue()
                 
                 img_base64 = base64.b64encode(img_bytes).decode("utf-8")
                 
-                # Добавляем картинку чертежа в запрос к ИИ
                 content_parts.append({
                     "type": "image_url",
                     "image_url": {
@@ -89,7 +95,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
         if response.status_code == 200:
             response_json = response.json()
-            # УСПЕШНО: Используем строгий цифровой индекс [0] для массива choices
             raw_content = response_json["choices"][0]["message"]["content"].strip()
             
             if raw_content.startswith("```"):
@@ -132,5 +137,5 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     except Exception as e:
         if os.path.exists(temp_download_path):
             os.remove(temp_download_path)
-        return {"error": str(e)}
+        return str(e)}
         
