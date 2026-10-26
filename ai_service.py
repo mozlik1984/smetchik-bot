@@ -26,7 +26,7 @@ def extract_google_file_id(url):
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
     Анализирует чертежи в высоком качестве с жестким требованием 
-    структуры ответа через JSON Mode.
+    структуры ответа через JSON-объект.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -34,6 +34,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
     }
 
     try:
+        # ИСПРАВЛЕНО: Теперь ИИ возвращает объект с ключом "estimate", что на 100% совместимо с JSON Mode
         prompt_text = (
             "Ты — высококлассный инженер-сметчик с глубоким пониманием строительных чертежей.\n"
             "Перед тобой графические листы дизайн-проекта. Проведи точный визуальный анализ каждого листа.\n\n"
@@ -42,8 +43,13 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "2. Внимательно читай текстовые сноски, спецификации Архикада и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
             "3. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
             f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
-            "Верни ответ строго в формате JSON-массива объектов. Никакого текста до или после массива быть не должно.\n"
-            "Формат ответа: [{\"name\": \"точное название работы из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
+            "Верни ответ СТРОГО в формате JSON-объекта, содержащего ключ \"estimate\", в котором лежит массив сметных позиций.\n"
+            "Пример структуры ответа:\n"
+            "{\n"
+            "  \"estimate\": [\n"
+            "    {\"name\": \"точное название работы из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}\n"
+            "  ]\n"
+            "}"
         )
 
         content_parts = [{"type": "text", "text": prompt_text}]
@@ -51,7 +57,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
             
-            # Диапазон сметных листов чертежей (с 6 по 16 страницу)
+            # Стабильный диапазон листов чертежей
             start_page = min(5, total_pages - 1)
             end_page = min(15, total_pages)
             
@@ -89,7 +95,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                     "content": content_parts
                 }
             ],
-            # ИСПРАВЛЕНО: Принудительный режим JSON Mode на уровне ядра OpenAI
             "response_format": {"type": "json_object"},
             "temperature": 0.05
         }
@@ -104,17 +109,27 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 
             first_choice = choices[0]
             message = first_choice.get("message", {})
-            raw_content = message.get("content", "").strip()
+            raw_content = message.get("content", "")
             
-            # Исправлено: если JSON пришел обернутым в объект ответа, извлекаем сам массив
+            if not raw_content:
+                return {"error": "ИИ вернул пустой контент ответа."}
+                
+            raw_content = raw_content.strip()
+            if raw_content.startswith("```"):
+                raw_content = raw_content.strip("```").strip("json").strip()
+                
             parsed_json = json.loads(raw_content)
+            
+            # Извлекаем наш сметный массив из объекта
             if isinstance(parsed_json, dict) and "estimate" in parsed_json:
                 return parsed_json["estimate"]
-            if isinstance(parsed_json, dict) and not isinstance(parsed_json, list):
-                # Если модель вернула объект со списком внутри, берем первый попавшийся массив
+                
+            # Защитный перебор на случай, если ключ назван иначе
+            if isinstance(parsed_json, dict):
                 for key, val in parsed_json.items():
                     if isinstance(val, list):
                         return val
+                        
             return parsed_json
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
@@ -154,4 +169,4 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
         if os.path.exists(temp_download_path):
             os.remove(temp_download_path)
         return {"error": f"Ошибка при загрузке по ссылке: {str(e)}"}
-        
+    
