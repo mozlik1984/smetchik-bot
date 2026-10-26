@@ -1,90 +1,78 @@
 import os
+import threading
+from flask import Flask
 import telebot
 import config
 import ai_service
 import file_generator
 
-# Инициализируем бота по токену из переменных окружения
+# 1. Настройка заглушки веб-сервера для Render
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot is alive!", 200
+
+def run_web_server():
+    # Render автоматически передает порт в переменную окружения PORT
+    port = int(os.environ.get("PORT", 8080))
+    # Запускаем на 0.0.0.0, чтобы Render снаружи мог достучаться
+    app.run(host="0.0.0.0", port=port)
+
+# 2. Инициализация Telegram бота
 bot = telebot.TeleBot(config.BOT_TOKEN)
 
 def get_price_list_content():
-    """Безопасно считывает прайс-лист из локального текстового файла."""
     file_name = "price_list.txt"
     if os.path.exists(file_name):
         with open(file_name, "r", encoding="utf-8") as f:
             return f.read()
-    return "Прайс-лист пуст или отсутствует на сервере."
+    return "Прайс-лист пуст или отсутствует."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = (
-        "👋 Приветствую! Я ваш автоматический бот-сметчик.\n\n"
-        "📥 **Как составить смету:**\n"
-        "Отправьте мне прямую ссылку на дизайн-проект, загруженный в Google Диск или Google Документы.\n\n"
-        "⚠️ Убедитесь, что доступ к файлу по ссылке открыт для всех (читатель/редактор), чтобы нейросеть смогла его изучить."
+        "👋 Приветствую! Я ваш бот-сметчик.\n\n"
+        "📥 Отправьте мне прямую ссылку на дизайн-проект из Google Диска."
     )
-    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+    bot.reply_to(message, welcome_text)
 
 @bot.message_handler(func=lambda message: True)
 def handle_project_link(message):
     user_text = message.text.strip()
-    
-    # Строгая проверка: содержит ли сообщение маркер Google Диска/Документов из config.py
     if config.GOOGLE_DRIVE_MARKER not in user_text:
-        bot.reply_to(
-            message, 
-            "❌ Это не похоже на ссылку Google Диска. Пожалуйста, отправьте корректную ссылку на проект."
-        )
+        bot.reply_to(message, "❌ Отправьте корректную ссылку на Google Диск.")
         return
         
-    status_message = bot.reply_to(
-        message, 
-        "⏳ **Ссылка принята!**\nСчитываю прайс-лист и передаю проект нейросети на анализ. Это может занять до 1-2 минут, пожалуйста, подождите..."
-    )
-    
-    # 1. Читаем прайс-лист
+    status_message = bot.reply_to(message, "⏳ Анализирую проект и прайс-лист...")
     price_list = get_price_list_content()
-    
-    # 2. Отправляем данные в нейросеть через наш сервис
     ai_response = ai_service.analyze_project_with_ai(user_text, price_list)
     
-    # Проверяем, вернулась ли ошибка при запросе
     if isinstance(ai_response, dict) and "error" in ai_response:
-        bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=status_message.message_id,
-            text=f"❌ Произошла ошибка при анализе ИИ:\n`{ai_response['error']}`",
-            parse_mode="Markdown"
-        )
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка ИИ: {ai_response['error']}")
         return
 
-    # 3. Генерируем файлы сметы (.txt и .xlsx)
     try:
         txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"смета_{message.chat.id}")
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text="✅ Смета готова! Отправляю...")
         
-        bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=status_message.message_id,
-            text="✅ **Смета успешно сформирована!**\nОтправляю готовые документы..."
-        )
-        
-        # 4. Отправляем файлы пользователю в чат
         with open(txt_file, "rb") as txt, open(xlsx_file, "rb") as xlsx:
-            bot.send_document(message.chat.id, txt, caption="📄 Смета в текстовом формате")
-            bot.send_document(message.chat.id, xlsx, caption="📊 Смета в формате Excel таблицы")
+            bot.send_document(message.chat.id, txt)
+            bot.send_document(message.chat.id, xlsx)
             
-        # Зачищаем временные файлы с диска после отправки для экономии места
         if os.path.exists(txt_file): os.remove(txt_file)
         if os.path.exists(xlsx_file): os.remove(xlsx_file)
-            
     except Exception as e:
-        bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=status_message.message_id,
-            text=f"❌ Ошибка генерации или отправки файлов сметы: {str(e)}"
-        )
+        bot.edit_message_text(chat_id=message.chat.id, message_id=status_message.message_id, text=f"❌ Ошибка файлов: {str(e)}")
 
+# 3. Запуск всего приложения
 if __name__ == "__main__":
-    # Запуск бесконечного цикла прослушивания бота
-    bot.infinity_polling()
+    # Запускаем веб-сервер в отдельном фоновом потоке
+    server_thread = threading.Thread(target=run_web_server)
+    server_thread.daemon = True
+    server_thread.start()
+    
+    # Запускаем опрос Telegram (с автоматическим пропуском старых апдейтов, чтобы убрать ошибку 409)
+    bot.remove_webhook()
+    bot.infinity_polling(skip_pending=True)
     
