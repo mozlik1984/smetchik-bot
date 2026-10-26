@@ -1,137 +1,106 @@
-import base64
-import requests
-import json
 import os
-import io
-import pdfplumber
+import threading
+import time
+from flask import Flask
+import telebot
 import config
+import ai_service
+import file_generator
 
-def extract_google_file_id(url):
-    if config.GOOGLE_DRIVE_MARKER not in url:
-        return None
-    try:
-        if config.PATH_MARKER_FILE_D in url:
-            start = url.find(config.PATH_MARKER_FILE_D) + len(config.PATH_MARKER_FILE_D)
-            end = url.find(config.URL_SLASH, start)
-            if end == -1: end = url.find(config.URL_QUESTION, start)
-            return url[start:] if end == -1 else url[start:end]
-        elif config.PARAM_ID_EQUAL in url:
-            start = url.find(config.PARAM_ID_EQUAL) + len(config.PARAM_ID_EQUAL)
-            end = url.find(config.URL_AND, start)
-            return url[start:] if end == -1 else url[start:end]
-    except Exception:
-        return None
-    return None
+app = Flask(__name__)
+bot = telebot.TeleBot(config.BOT_TOKEN)
 
-def analyze_project_file_with_ai(file_path, price_list_text):
-    """
-    Конвертирует ключевые листы чертежей PDF в легкие RGB-картинки и 
-    отправляет их через base64 в зрячую модель gpt-4o-mini.
-    """
-    headers = {
-        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
+@app.route('/')
+def health_check():
+    return "Bot is alive!", 200
 
-    try:
-        content_parts = [
-            {
-                "type": "text",
-                "text": (
-                    "Ты — опытный инженер-сметчик в сфере отделки и ремонта квартир.\n"
-                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, планы полов и стен.\n"
-                    "Рассмотри все визуальные комментарии дизайнера, сноски и стрелочки (нахождение фанерных закладных, усиление профилей под инсталляции, скрытые двери invisible).\n"
-                    "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши под шторы — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь пола.\n\n"
-                    f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
-                    "Выполни расчет:\n"
-                    "1. Рассчитай точные площади (кв.м), длины (п.м) и количество (шт) по каждой подходящей позиции из прайса.\n"
-                    "2. Сформируй смету строго в формате JSON-массива объектов, без разметки markdown (без ```json).\n"
-                    "Формат ответа: [{\"name\": \"название\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}]"
-                )
-            }
-        ]
+def get_price_list_content():
+    file_name = "price_list.txt"
+    if os.path.exists(file_name):
+        with open(file_name, "r", encoding="utf-8") as f:
+            return f.read()
+    return "Прайс-лист пуст."
 
-        with pdfplumber.open(file_path) as pdf:
-            max_pages = min(len(pdf.pages), 15)
-            for i in range(max_pages):
-                page = pdf.pages[i]
-                
-                pix = page.to_image(resolution=100)
-                pil_img = pix.original
-                
-                if pil_img.mode != "RGB":
-                    pil_img = pil_img.convert("RGB")
-                
-                img_buffer = io.BytesIO()
-                pil_img.save(img_buffer, format="JPEG", quality=60)
-                img_bytes = img_buffer.getvalue()
-                
-                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-                
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{img_base64}"
-                    }
-                })
-
-        data = {
-            "model": "openai/gpt-4o-mini",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": content_parts
-                }
-            ],
-            "temperature": 0.1
-        }
-
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
-
-        if response.status_code == 200:
-            response_json = response.json()
-            # ИСПРАВЛЕНО: Добавлен строгий индекс [0] для корректного чтения первого элемента массива choices
-            raw_content = response_json["choices"][0]["message"]["content"].strip()
-            
-            if raw_content.startswith("```"):
-                raw_content = raw_content.strip("```").strip("json").strip()
-            return json.loads(raw_content)
-        else:
-            return {"error": f"API Error {response.status_code}: {response.text}"}
-
-    except Exception as e:
-        return {"error": f"Ошибка зрячего анализа чертежей: {str(e)}"}
-
-def analyze_project_url_by_downloading(project_url, price_list_text):
-    file_id = extract_google_file_id(project_url)
-    if not file_id:
-        return {"error": "Не удалось распознать ID файла."}
-        
-    download_url = (
-        f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
-        f"{config.PARAM_EXPORT_DOWNLOAD}{config.URL_AND}"
-        f"id{config.URL_EQUAL}{file_id}"
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    welcome_text = (
+        "👋 **Бот-сметчик запущен в зрячем боевом режиме!**\n\n"
+        "📥 **Как составить смету:**\n"
+        "Отправьте мне ссылку на Google Диск с вашим дизайн-проектом (PDF).\n"
+        "Убедитесь, что доступ открыт для всех по ссылке."
     )
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
-    os.makedirs("temp", exist_ok=True)
-    temp_download_path = f"temp/downloaded_{file_id}.pdf"
+@bot.message_handler(func=lambda message: True)
+def handle_project_link(message):
+    user_text = message.text.strip()
     
+    if config.GOOGLE_DRIVE_MARKER not in user_text:
+        bot.reply_to(message, "❌ Пожалуйста, отправьте корректную ссылку на Google Диск.")
+        return
+        
+    status_message = bot.reply_to(
+        message, 
+        "⏳ **Ссылка принята!**\nСкачиваю чертежи проекта на сервер и передаю в зрячую модель для визуального анализа выносок и размеров..."
+    )
+    
+    price_list = get_price_list_content()
+    ai_response = ai_service.analyze_project_url_by_downloading(user_text, price_list)
+    
+    if isinstance(ai_response, dict) and "error" in ai_response:
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text=f"❌ Ошибка ИИ:\n`{ai_response['error']}`", 
+            parse_mode="Markdown"
+        )
+        return
+
+    if not ai_response:
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text="⚠️ ИИ вернул пустой результат."
+        )
+        return
+
     try:
-        with requests.get(download_url, stream=True, timeout=60) as r:
-            if r.status_code != 200:
-                return {"error": f"Не удалось скачать файл. Статус: {r.status_code}."}
-            with open(temp_download_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    
-        result = analyze_project_file_with_ai(temp_download_path, price_list_text)
+        txt_file, xlsx_file = file_generator.generate_files(ai_response, base_name=f"смета_{message.chat.id}")
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text="✅ **Смета успешно сформирована!**\nОтправляю файлы..."
+        )
         
-        if os.path.exists(temp_download_path):
-            os.remove(temp_download_path)
-        return result
-        
+        with open(txt_file, "rb") as txt, open(xlsx_file, "rb") as xlsx:
+            bot.send_document(message.chat.id, txt, caption="📄 Смета в текстовом формате")
+            bot.send_document(message.chat.id, xlsx, caption="📊 Итоговая таблица Excel")
+            
+        if os.path.exists(txt_file): os.remove(txt_file)
+        if os.path.exists(xlsx_file): os.remove(xlsx_file)
     except Exception as e:
-        if os.path.exists(temp_download_path):
-            os.remove(temp_download_path)
-        return {"error": f"Ошибка при загрузке по ссылке: {str(e)}"}
-        
+        bot.edit_message_text(
+            chat_id=message.chat.id, 
+            message_id=status_message.message_id, 
+            text=f"❌ Ошибка сборки файлов: {str(e)}"
+        )
+
+def run_bot_polling():
+    """Фоновая функция для безопасного запуска бота после открытия порта"""
+    time.sleep(3)  # Даем Flask 3 секунды гарантированно занять порт Render
+    try:
+        bot.remove_webhook()
+        bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=30)
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    # 1. Сначала запускаем фоновый поток для Telegram-бота
+    bot_thread = threading.Thread(target=run_bot_polling)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # 2. Мгновенно открываем веб-порт в основном потоке, чтобы Render одобрил деплой
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+    
