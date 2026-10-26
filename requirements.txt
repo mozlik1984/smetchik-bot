@@ -1,6 +1,4 @@
-aiogram
-python-dotenv
-aiohttp
-openpyxl
-pymupdf
-
+pyTelegramBotAPI==4.26.0
+requests==2.32.3
+openpyxl==3.1.5
+python-dotenv==1.0.1
