@@ -64,7 +64,7 @@ async def run_full_pipeline(file_path: str, safe_filename: str, message: types.M
 
         await status_message.edit_text("🧮 Почти готово! Перемножаю объемы на прайс-лист...")
 
-        project_name = os.path.splitext(safe_filename)[0]
+        project_name = os.path.splitext(safe_filename)
         estimate_result = calculate_project_estimate(total_extracted_volumes, project_name)
         
         await status_message.delete()
@@ -121,6 +121,7 @@ async def handle_pdf_link(message: types.Message):
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
+    # МЕТЛА: Принудительно вышибаем все зависшие сессии и параллельных клонов
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
