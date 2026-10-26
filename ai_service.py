@@ -39,7 +39,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 "type": "text",
                 "text": (
                     "Ты — опытный инженер-сметчик в сфере отделки и ремонта квартир.\n"
-                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, планы полов и стен.\n"
+                    "Перед тобой графические листы дизайн-проекта. Внимательно изучи чертежи, схемы, ведомости отделки, plans полов и стен.\n"
                     "Рассмотри все визуальные комментарии дизайнера, сноски и стрелочки (нахождение фанерных закладных, усиление профилей под инсталляции, скрытые двери invisible).\n"
                     "Если на плане указан натяжной потолок, а из ГКЛ делаются только скрытые ниши под шторы — считай ГКЛ строго в погонных метрах ниш, не раздувай смету на всю площадь пола.\n\n"
                     f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
@@ -51,22 +51,17 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             }
         ]
 
-        # Открываем PDF-проект и обрабатываем первые 15 ключевых страниц
         with pdfplumber.open(file_path) as pdf:
             max_pages = min(len(pdf.pages), 15)
             for i in range(max_pages):
                 page = pdf.pages[i]
                 
-                # Делаем быстрый снимок страницы чертежа
                 pix = page.to_image(resolution=100)
-                # Переводим в объект PIL Image
                 pil_img = pix.original
                 
-                # ИСПРАВЛЕНО: Принудительно конвертируем любой графический режим (включая mode P) в стандартный RGB для JPEG
                 if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
                 
-                # Сохраняем во временный буфер байтов
                 img_buffer = io.BytesIO()
                 pil_img.save(img_buffer, format="JPEG", quality=60)
                 img_bytes = img_buffer.getvalue()
@@ -95,7 +90,7 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
         if response.status_code == 200:
             response_json = response.json()
-            raw_content = response_json["choices"][0]["message"]["content"].strip()
+            raw_content = response_json["choices"]['message']["content"].strip()
             
             if raw_content.startswith("```"):
                 raw_content = raw_content.strip("```").strip("json").strip()
@@ -137,5 +132,5 @@ def analyze_project_url_by_downloading(project_url, price_list_text):
     except Exception as e:
         if os.path.exists(temp_download_path):
             os.remove(temp_download_path)
-        return str(e)}
+        return {"error": f" Ошибка при загрузке по ссылке: {str(e)}"}
         
