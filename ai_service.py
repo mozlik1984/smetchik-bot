@@ -2,24 +2,42 @@ import base64
 import json
 import aiohttp
 from config import AI_COMPLETION_URL, OPENAI_API_KEY
+from database import load_price_list
 
 def encode_image_to_base64(image_path: str) -> str:
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 async def analyze_project_page(image_path: str) -> dict:
+    current_prices = load_price_list()
+    available_keys = list(current_prices.keys())
+
+    if not available_keys:
+        available_keys = ["shkaturka_sten", "laminat_zamok", "keramogranit_60x120", "pie_sten_pod_pokrasku", "invisible_doors_complex"]
+
     system_prompt = (
-        "You are an assistant. Look at the blueprint image. "
-        "Find any tables, materials, text or quantities. "
-        "List what you see in English language. "
-        "Return STRICTLY a JSON object with one key 'debug_text' containing your text. "
-        "Do not use any non-ascii characters."
+        "You are an expert estimation engineer. Analyze the provided Russian blueprint or table image. "
+        "Find construction and finishing works, their quantities (volumes, areas) and map them to the allowed keys.\n\n"
+        f"ALLOWED KEYS LIST: {', '.join(available_keys)}\n\n"
+        "CRITICAL MAPPING RULES FOR RUSSIAN TEXT IN IMAGE:\n"
+        "- If you see Russian words like 'Shtukatourka', 'Shtukaturnye', 'Vravnivanie sten' -> map to 'shkaturka_sten'\n"
+        "- If you see Russian words like 'Laminat', 'Kvarcvinil', 'Pol' or floor finish quantities -> map to 'laminat_zamok'\n"
+        "- If you see Russian words like 'Keramogranit', 'Plitka', '60x120' -> map to 'keramogranit_60x120'\n"
+        "- If you see Russian words like 'Pokraska sten', 'Steny pod pokrasku', 'Okraska' -> map to 'pie_sten_pod_pokrasku'\n"
+        "- If you see Russian words like 'Skrytaya dver', 'Invisible' -> map to 'invisible_doors_complex'\n\n"
+        "OUTPUT FORMAT Rules:\n"
+        "1. Return output STRICTLY as a valid JSON object.\n"
+        "2. Key must be ONLY from the allowed keys list, value must be a number (volume, quantity).\n"
+        "3. If no matching construction data found on this page, return an empty JSON object: {}\n"
+        "Example response:\n"
+        '{"shkaturka_sten": 120.5, "laminat_zamok": 45.0}'
     )
 
     try:
         base64_image = encode_image_to_base64(image_path)
     except Exception as e:
-        return {"debug_text": f"Error encoding: {e}"}
+        print(f"Error: {e}")
+        return {}
 
     headers = {
         "Content-Type": "application/json",
@@ -39,7 +57,7 @@ async def analyze_project_page(image_path: str) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": "What text or tables do you see on this page?"
+                        "text": "Find finishing volumes from this Russian project image and map to JSON."
                     },
                     {
                         "type": "image_url",
@@ -50,7 +68,7 @@ async def analyze_project_page(image_path: str) -> dict:
                 ]
             }
         ],
-        "temperature": 0.5
+        "temperature": 0.0
     }
 
     async with aiohttp.ClientSession() as session:
@@ -61,8 +79,7 @@ async def analyze_project_page(image_path: str) -> dict:
                     content = result["choices"]["message"]["content"]
                     return json.loads(content)
                 else:
-                    err = await response.text()
-                    return {"debug_text": f"API Error {response.status}: {err}"}
+                    return {}
         except Exception as e:
-            return {"debug_text": f"Network error: {e}"}
-          
+            return {}
+            
