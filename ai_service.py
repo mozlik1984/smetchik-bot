@@ -25,8 +25,8 @@ def extract_google_file_id(url):
 
 def analyze_project_file_with_ai(file_path, price_list_text):
     """
-    Интеллектуально отбирает только целевые листы с развертками, плинтусами и штукатуркой,
-    отправляя в gpt-4o компактный и точный визуальный пакет.
+    Сканирует правильный строительный диапазон страниц (со 2 по 22 лист),
+    захватывая демонтаж, возведение стен, штукатурку и все ведомости чистовой отделки.
     """
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
@@ -38,9 +38,10 @@ def analyze_project_file_with_ai(file_path, price_list_text):
             "Ты — высококлассный инженер-сметчик с глубоким пониманием сложных строительных чертежей.\n"
             "Перед тобой графические листы дизайн-проекта. Проведи точный визуальный анализ каждого листа.\n\n"
             "ЖЕСТКИЕ ПРАВИЛА РАСЧЕТА:\n"
-            "1. Ищи сложные, оригинальные отделочные работы строго из прайса. Особое внимание обрати на: 'полный пирог под покраску', 'штукатурка стен', 'плинтус скрытого монтажа', 'откосы', 'демонтаж/монтаж перегородок', 'крупноформатный керамогранит', 'авторские обои' и 'скрытые двери Invisible'. Подставляй именно их с точными объемами. НЕ упрощай до стандартных отделочных работ!\n"
-            "2. Внимательно читай текстовые сноски, спецификации Архикада на развертках стен и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
-            "3. Скрупулезно проанализируй ведомости отделки и экспликации помещений. Суммируй площади стен, полов и погонаж плинтусов со всех чертежей.\n\n"
+            "1. В НАЧАЛЕ АЛЬБОМА найди планы демонтажа и монтажа. Рассчитай объемы по позициям: 'демонтаж межкомнатных перегородок', 'возведение перегородок', 'штукатурка стен'.\n"
+            "2. Ищи сложные, оригинальные отделочные работы строго из прайса: 'полный пирог под покраску', 'плинтус скрытого монтажа', 'откосы', 'крупноформатный керамогранит', 'авторские обои' и 'скрытые двери Invisible'. Подставляй именно их с точными объемами.\n"
+            "3. Внимательно читай текстовые сноски, спецификации Архикада на развертках стен и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
+            "4. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
             f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
             "Верни ответ СТРОГО в формате JSON-объекта, содержащего ключ \"estimate\", в котором лежит массив сметных позиций.\n"
             "Пример структуры ответа:\n"
@@ -52,39 +53,30 @@ def analyze_project_file_with_ai(file_path, price_list_text):
         )
 
         content_parts = [{"type": "text", "text": prompt_text}]
-        
-        # Ключевые слова для интеллектуального поиска скрытых отделочных работ на листах
-        keywords = ["развертк", "ведомост", "экспликац", "план стен", "план полов", "плинтус", "покраск", "штукатур", "демонтаж"]
 
         with pdfplumber.open(file_path) as pdf:
-            pages_to_send = []
+            total_pages = len(pdf.pages)
             
-            # Умный постраничный отбор листов
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                text_lower = text.lower()
-                
-                # Если лист содержит чертежную сметную информацию
-                if any(kw in text_lower for kw in keywords):
-                    pages_to_send.append(page)
+            # Настраиваем правильный диапазон: со 2 по 22 страницу (в индексах Python это 1-21)
+            start_page = min(1, total_pages - 1)
+            end_page = min(21, total_pages)
             
-            # Защита: если чертежи сохранены в кривых и текст не извлекся, берем ключевой диапазон разверток (с 15 по 25 листы)
-            if not pages_to_send:
-                total = len(pdf.pages)
-                pages_to_send = pdf.pages[min(14, total-1):min(25, total)]
-            
-            # Жестко ограничиваем до 8 самых информативных страниц для стабильности шлюза
-            final_pages = pages_to_send[:8]
+            if start_page >= end_page:
+                start_page = 0
+                end_page = total_pages
 
-            for page in final_pages:
-                pix = page.to_image(resolution=130)
+            for i in range(start_page, end_page):
+                page = pdf.pages[i]
+                
+                # Легкий мгновенный снимок листа без текстового сканирования
+                pix = page.to_image(resolution=120)
                 pil_img = pix.original
                 
                 if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
                 
                 img_buffer = io.BytesIO()
-                pil_img.save(img_buffer, format="JPEG", quality=75)
+                pil_img.save(img_buffer, format="JPEG", quality=70)
                 img_bytes = img_buffer.getvalue()
                 
                 img_base64 = base64.b64encode(img_bytes).decode("utf-8")
@@ -112,28 +104,23 @@ def analyze_project_file_with_ai(file_path, price_list_text):
 
         if response.status_code == 200:
             response_json = response.json()
-            choices = response_json.get("choices", [])
-            if not choices or not isinstance(choices, list) or len(choices) == 0:
-                return {"error": f"Неверная структура ответа API: {response.text}"}
+            choices = response_json.get("choices")
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                first_choice = choices[0]
+                message = first_choice.get("message", {})
+                raw_content = message.get("content", "").strip()
                 
-            first_choice = choices[0]
-            message = first_choice.get("message", {})
-            raw_content = message.get("content", "").strip()
-            
-            if raw_content.startswith("```"):
-                raw_content = raw_content.strip("```").strip("json").strip()
+                parsed_json = json.loads(raw_content)
+                if isinstance(parsed_json, dict) and "estimate" in parsed_json:
+                    return parsed_json["estimate"]
                 
-            parsed_json = json.loads(raw_content)
-            
-            if isinstance(parsed_json, dict) and "estimate" in parsed_json:
-                return parsed_json["estimate"]
-                
-            if isinstance(parsed_json, dict):
-                for key, val in parsed_json.items():
-                    if isinstance(val, list):
-                        return val
-                        
-            return parsed_json
+                if isinstance(parsed_json, dict):
+                    for key, val in parsed_json.items():
+                        if isinstance(val, list):
+                            return val
+                return parsed_json
+            else:
+                return {"error": "API вернул пустой список choices"}
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
 
