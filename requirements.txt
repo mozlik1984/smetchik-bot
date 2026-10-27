@@ -3,4 +3,4 @@ requests
 openpyxl
 python-dotenv
 Flask
-pdfplumber
+
