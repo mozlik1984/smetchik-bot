@@ -1,9 +1,6 @@
-import base64
 import requests
 import json
 import os
-import io
-import pdfplumber
 import config
 
 def extract_google_file_id(url):
@@ -24,84 +21,70 @@ def extract_google_file_id(url):
     return None
 
 def analyze_project_file_with_ai(file_path, price_list_text):
+    return {"error": "Пожалуйста, используйте отправку ссылок на Google Диск."}
+
+def analyze_project_url_by_downloading(project_url, price_list_text):
     """
-    Сканирует правильный строительный диапазон страниц (со 2 по 22 лист),
-    захватывая демонтаж, возведение стен, штукатурку и все ведомости чистовой отделки.
+    Прямой перенос ИИ-зрения в облако. Код шлет прямую ссылку на PDF проекта
+    в gpt-4o. Модель сама открывает её внутри своего ядра без нагрузки на Render.
     """
+    file_id = extract_google_file_id(project_url)
+    if not file_id:
+        return {"error": "Не удалось распознать ID файла в ссылке Google Диска."}
+        
+    download_url = (
+        f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
+        f"{config.PARAM_EXPORT_DOWNLOAD}{config.URL_AND}"
+        f"id{config.URL_EQUAL}{file_id}"
+    )
+
     headers = {
         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
         "Content-Type": "application/json"
     }
-
-    try:
-        prompt_text = (
-            "Ты — высококлассный инженер-сметчик с глубоким пониманием сложных строительных чертежей.\n"
-            "Перед тобой графические листы дизайн-проекта. Проведи точный визуальный анализ каждого листа.\n\n"
-            "ЖЕСТКИЕ ПРАВИЛА РАСЧЕТА:\n"
-            "1. В НАЧАЛЕ АЛЬБОМА найди планы демонтажа и монтажа. Рассчитай объемы по позициям: 'демонтаж межкомнатных перегородок', 'возведение перегородок', 'штукатурка стен'.\n"
-            "2. Ищи сложные, оригинальные отделочные работы строго из прайса: 'полный пирог под покраску', 'плинтус скрытого монтажа', 'откосы', 'крупноформатный керамогранит', 'авторские обои' и 'скрытые двери Invisible'. Подставляй именно их с точными объемами.\n"
-            "3. Внимательно читай текстовые сноски, спецификации Архикада на развертках стен и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
-            "4. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
-            f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
-            "Верни ответ СТРОГО в формате JSON-объекта, содержащего ключ \"estimate\", в котором лежит массив сметных позиций.\n"
-            "Пример структуры ответа:\n"
-            "{\n"
-            "  \"estimate\": [\n"
-            "    {\"name\": \"точное название работы из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}\n"
-            "  ]\n"
-            "}"
-        )
-
-        content_parts = [{"type": "text", "text": prompt_text}]
-
-        with pdfplumber.open(file_path) as pdf:
-            total_pages = len(pdf.pages)
-            
-            # Настраиваем правильный диапазон: со 2 по 22 страницу (в индексах Python это 1-21)
-            start_page = min(1, total_pages - 1)
-            end_page = min(21, total_pages)
-            
-            if start_page >= end_page:
-                start_page = 0
-                end_page = total_pages
-
-            for i in range(start_page, end_page):
-                page = pdf.pages[i]
-                
-                # Легкий мгновенный снимок листа без текстового сканирования
-                pix = page.to_image(resolution=120)
-                pil_img = pix.original
-                
-                if pil_img.mode != "RGB":
-                    pil_img = pil_img.convert("RGB")
-                
-                img_buffer = io.BytesIO()
-                pil_img.save(img_buffer, format="JPEG", quality=70)
-                img_bytes = img_buffer.getvalue()
-                
-                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-                
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{img_base64}"
+    
+    prompt = (
+        "Ты — высококлассный инженер-сметчик с глубоким пониманием сложных строительных чертежей.\n"
+        "Перед тобой полноценный дизайн-проект в прикрепленном PDF-файле по ссылке.\n"
+        "Проведи доскональный визуальный анализ всего альбома чертежей.\n\n"
+        "ЖЕСТКИЕ ПРАВИЛА РАСЧЕТА:\n"
+        "1. В НАЧАЛЕ АЛЬБОМА найди планы демонтажа и монтажа. Обязательно рассчитай объемы по позициям: 'демонтаж межкомнатных перегородок (ГКЛ/кирпич)', 'возведение новых перегородок', 'штукатурка стен по маякам'.\n"
+        "2. Ищи сложные, оригинальные отделочные работы строго из прайса: 'полный пирог стен под покраску', 'плинтус скрытого монтажа', 'откосы', 'крупноформатный керамогранит', 'авторские обои' и 'скрытые двери Invisible'. Подставляй именно их с точными площадями и длинами.\n"
+        "3. Внимательно читай текстовые сноски, спецификации Архикада на развертках стен и мелкие комментарии со стрелочками. Найди скрытые ниши для штор, инсталляции с усилением профиля и фанерные закладные под мебель/ТВ.\n"
+        "4. НЕ придумывай объемы из головы. Если на плане потолок указан как натяжной, а ГКЛ используется локально только для скрытых шторных ниш — считай ГКЛ строго в погонных метрах ниш, НЕ раздувай ГКЛ на всю площадь потолка.\n\n"
+        f"Используй исключительно этот прайс-лист на строительные работы:\n{price_list_text}\n\n"
+        "Верни ответ СТРОГО в формате JSON-объекта, содержащего ключ \"estimate\", в котором лежит массив сметных позиций.\n"
+        "Пример структуры ответа:\n"
+        "{\n"
+        "  \"estimate\": [\n"
+        "    {\"name\": \"точное название работы из прайса\", \"unit\": \"кв.м\", \"count\": 10, \"price\": 900, \"total\": 9000}\n"
+        "  ]\n"
+        "}"
+    )
+    
+    data = {
+        "model": "openai/gpt-4o", # Старшая полноценная зрячая модель
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": download_url # Скармливаем прямую ссылку на чтение PDF
+                        }
                     }
-                })
-
-        data = {
-            "model": "openai/gpt-4o",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": content_parts
-                }
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.05
-        }
-
-        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=160)
-
+                ]
+            }
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.05
+    }
+    
+    try:
+        response = requests.post(config.AI_COMPLETIONS_URL, headers=headers, json=data, timeout=170)
+        
         if response.status_code == 200:
             response_json = response.json()
             choices = response_json.get("choices")
@@ -113,7 +96,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 parsed_json = json.loads(raw_content)
                 if isinstance(parsed_json, dict) and "estimate" in parsed_json:
                     return parsed_json["estimate"]
-                
                 if isinstance(parsed_json, dict):
                     for key, val in parsed_json.items():
                         if isinstance(val, list):
@@ -123,40 +105,6 @@ def analyze_project_file_with_ai(file_path, price_list_text):
                 return {"error": "API вернул пустой список choices"}
         else:
             return {"error": f"API Error {response.status_code}: {response.text}"}
-
     except Exception as e:
-        return {"error": f"Ошибка зрячего анализа чертежей: {str(e)}"}
-
-def analyze_project_url_by_downloading(project_url, price_list_text):
-    file_id = extract_google_file_id(project_url)
-    if not file_id:
-        return {"error": "Не удалось распознать ID файла."}
-        
-    download_url = (
-        f"{config.API_GOOGLE_UC}{config.URL_QUESTION}"
-        f"{config.PARAM_EXPORT_DOWNLOAD}{config.URL_AND}"
-        f"id{config.URL_EQUAL}{file_id}"
-    )
-
-    os.makedirs("temp", exist_ok=True)
-    temp_download_path = f"temp/downloaded_{file_id}.pdf"
-    
-    try:
-        with requests.get(download_url, stream=True, timeout=60) as r:
-            if r.status_code != 200:
-                return {"error": f"Не удалось скачать файл. Статус: {r.status_code}."}
-            with open(temp_download_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    
-        result = analyze_project_file_with_ai(temp_download_path, price_list_text)
-        
-        if os.path.exists(temp_download_path):
-            os.remove(temp_download_path)
-        return result
-        
-    except Exception as e:
-        if os.path.exists(temp_download_path):
-            os.remove(temp_download_path)
-        return {"error": f"Ошибка при загрузке по ссылке: {str(e)}"}
+        return {"error": f"Ошибка мультимодального анализа: {str(e)}"}
         
